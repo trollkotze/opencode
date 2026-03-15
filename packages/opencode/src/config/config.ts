@@ -1165,6 +1165,10 @@ export namespace Config {
                 env: z.record(z.string(), z.string()).optional(),
                 initialization: z.record(z.string(), z.any()).optional(),
               }),
+              z.object({
+                disabled: z.literal(false).optional(),
+                initialization: z.record(z.string(), z.any()),
+              }),
             ]),
           ),
         ])
@@ -1178,7 +1182,7 @@ export namespace Config {
             return Object.entries(data).every(([id, config]) => {
               if (config.disabled) return true
               if (serverIds.has(id)) return true
-              return Boolean(config.extensions)
+              return "extensions" in config && Boolean(config.extensions)
             })
           },
           {
