@@ -67,6 +67,24 @@ export namespace SessionRevert {
     return groups
   }
 
+  /**
+   * Resolve the "after" tree hash for patch `i` in a group.
+   *
+   * Priority:
+   * 1. group.after[i] — direct step-finish snapshot (most precise)
+   * 2. group.patches[i+1].hash — the next patch's before-hash IS this patch's after-state
+   * 3. groups[groupIdx+1].patches[0].hash — next group's before-hash
+   * 4. base — the snapshot captured at revert time (contains all assistant changes)
+   * 5. undefined — no reference available
+   */
+  function resolveAfterHash(groups: PatchGroup[], idx: number, patch: number, base?: string): string | undefined {
+    const group = groups[idx]
+    if (group.after[patch]) return group.after[patch]
+    if (group.patches[patch + 1]) return group.patches[patch + 1].hash
+    if (groups[idx + 1]?.patches[0]) return groups[idx + 1].patches[0].hash
+    return base
+  }
+
   /** Detect file conflicts between messages being undone and messages being kept */
   function detect(groups: PatchGroup[], skipped: Set<MessageID>): Conflict[] {
     const result: Conflict[] = []
@@ -112,6 +130,69 @@ export namespace SessionRevert {
     })
   }
 
+  /**
+   * Compute and apply the desired working-tree state for all affected files.
+   *
+   * For each file touched by any group in scope, walks groups in message order.
+   * The LAST group touching a file determines its state:
+   * - If that group is **kept** (skipped): file → group's "after" state.
+   * - If that group is **undone** (not skipped): file → "origin" state (the tree
+   *   before the first group in scope made any changes, i.e. groups[0].patches[0].hash).
+   *
+   * The "after" hash is resolved via resolveAfterHash which falls back to the next
+   * patch/group's before-hash when step-finish snapshots are unavailable.
+   *
+   * Returns list of files that couldn't be resolved (for warning).
+   */
+  async function applyDesiredState(
+    groups: PatchGroup[],
+    skipped: Set<MessageID>,
+    base: string | undefined,
+  ): Promise<string[]> {
+    if (!groups.length) return []
+
+    // The "origin" is the tree state before the first group in scope made changes.
+    const origin = groups[0].patches[0]?.hash
+
+    // Collect all affected files and find the last KEPT group's after-hash for each.
+    const affected = new Set<string>()
+    const kept = new Map<string, { hash: string | undefined }>()
+
+    for (let gi = 0; gi < groups.length; gi++) {
+      const group = groups[gi]
+      for (let pi = 0; pi < group.patches.length; pi++) {
+        for (const file of group.patches[pi].files) {
+          affected.add(file)
+          if (skipped.has(group.messageID)) {
+            // Last kept group wins for this file
+            kept.set(file, { hash: resolveAfterHash(groups, gi, pi, base) })
+          }
+        }
+      }
+    }
+
+    // Build desired state: kept files use their after-hash, others use origin
+    const desired = new Map<string, { hash: string | undefined }>()
+    for (const file of affected) {
+      desired.set(file, kept.get(file) ?? { hash: origin })
+    }
+
+    const warnings: string[] = []
+
+    for (const [file, target] of desired) {
+      if (target.hash) {
+        // checkout handles both file presence and deletion (ls-tree + removeFile)
+        await Snapshot.checkout(target.hash, file)
+      } else {
+        // No hash available at all — warn
+        log.warn("applyDesiredState: no snapshot hash available for file", { file })
+        warnings.push(file)
+      }
+    }
+
+    return warnings
+  }
+
   export async function revert(input: RevertInput) {
     SessionPrompt.assertNotBusy(input.sessionID)
     const all = await Session.messages({ sessionID: input.sessionID })
@@ -146,10 +227,9 @@ export namespace SessionRevert {
       revert.snapshot = session.revert?.snapshot
       revert.skipped = groups.map((g) => g.messageID)
     } else if (input.skipMessages?.length) {
-      // Selective: undo some messages' files, keep others
+      // Selective: use layer-based approach to compute desired final state
       revert.snapshot = session.revert?.snapshot ?? (await Snapshot.track())
-      const undo = groups.filter((g) => !skipped.has(g.messageID)).flatMap((g) => g.patches)
-      if (undo.length) await Snapshot.revert(undo)
+      await applyDesiredState(groups, skipped, revert.snapshot)
       if (revert.snapshot) revert.diff = await Snapshot.diff(revert.snapshot)
       revert.skipped = input.skipMessages.filter((id) => groups.some((g) => g.messageID === id))
     } else {
@@ -164,7 +244,8 @@ export namespace SessionRevert {
 
   /**
    * Undo file changes for a single assistant message that currently has its files kept.
-   * Removes it from the skipped list.
+   * Removes it from the skipped list, then recomputes the desired state for all affected
+   * files using the layer-based approach to avoid clobbering other kept messages' changes.
    */
   export async function undoFiles(input: MessageFileInput) {
     SessionPrompt.assertNotBusy(input.sessionID)
@@ -183,9 +264,10 @@ export namespace SessionRevert {
       session.revert.snapshot = await Snapshot.track()
     }
 
-    await Snapshot.revert(group.patches)
-
+    // Remove from skipped, then recompute desired state for all affected files
     skipped.delete(input.messageID)
+    await applyDesiredState(groups, skipped, session.revert.snapshot)
+
     const revert = {
       ...session.revert,
       skipped: skipped.size ? [...skipped] : undefined,
@@ -197,11 +279,13 @@ export namespace SessionRevert {
 
   /**
    * Re-apply file changes for a single assistant message that currently has its files undone.
-   * Adds it to the skipped list.
+   * Adds it to the skipped list, then recomputes the desired state for all affected files
+   * using the layer-based approach.
    *
    * Uses step-finish snapshots to check out files at the state after the assistant made changes.
-   * If step-finish snapshots aren't available, falls back to the patch's before-hash and
-   * re-applies by writing the files (less precise but functional).
+   * When step-finish snapshots aren't available, falls back to reconstructing the after-state
+   * from the next patch/group's before-hash via Snapshot.readFile + Filesystem.write.
+   * Logs warnings for files that could not be resolved.
    */
   export async function keepFiles(input: MessageFileInput) {
     SessionPrompt.assertNotBusy(input.sessionID)
@@ -215,18 +299,16 @@ export namespace SessionRevert {
     const group = groups.find((g) => g.messageID === input.messageID)
     if (!group) return session
 
-    // Re-apply this message's file changes by checking out from step-finish snapshots.
-    // Each patch corresponds to a step; the after[] array has the snapshot hash after that step.
-    for (let i = 0; i < group.patches.length; i++) {
-      const patch = group.patches[i]
-      const hash = group.after[i]
-      if (!hash) continue
-      for (const file of patch.files) {
-        await Snapshot.checkout(hash, file)
-      }
+    // Add to skipped, then recompute desired state for all affected files
+    skipped.add(input.messageID)
+    const warnings = await applyDesiredState(groups, skipped, session.revert.snapshot)
+    if (warnings.length) {
+      log.warn("keepFiles: some files could not be restored", {
+        messageID: input.messageID,
+        files: warnings,
+      })
     }
 
-    skipped.add(input.messageID)
     const revert = {
       ...session.revert,
       skipped: [...skipped],
