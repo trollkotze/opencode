@@ -10,6 +10,8 @@ import { Storage } from "@/storage/storage"
 import { Bus } from "../bus"
 import { SessionPrompt } from "./prompt"
 import { SessionSummary } from "./summary"
+import { SessionCompaction } from "./compaction"
+import { Token } from "../util/token"
 
 export namespace SessionRevert {
   const log = Log.create({ service: "session.revert" })
@@ -133,6 +135,43 @@ export namespace SessionRevert {
         }
       }
     }
+    // After removing reverted messages, unprune tool outputs that would not
+    // have been pruned if prune() ran on the now-shorter conversation.
+    // The original output is still in the database — the compacted timestamp
+    // is just a flag that suppresses it during serialization.
+    const remaining = await Session.messages({ sessionID })
+    let total = 0
+    let turns = 0
+    const unprune = []
+    outer: for (let i = remaining.length - 1; i >= 0; i--) {
+      const msg = remaining[i]
+      if (msg.info.role === "user") turns++
+      if (msg.info.role === "assistant" && msg.info.summary) break
+      for (let j = msg.parts.length - 1; j >= 0; j--) {
+        const part = msg.parts[j]
+        if (part.type !== "tool") continue
+        if (part.state.status !== "completed") continue
+        if (SessionCompaction.PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
+        // Parts in the last 2 user turns are unconditionally protected by
+        // prune(), so any compacted parts there must always be unpruned.
+        if (turns < 2) {
+          if (part.state.time.compacted) unprune.push(part)
+          continue
+        }
+        const estimate = Token.estimate(part.state.output)
+        total += estimate
+        if (total > SessionCompaction.PRUNE_PROTECT) break outer
+        if (part.state.time.compacted) unprune.push(part)
+      }
+    }
+    for (const part of unprune) {
+      if (part.state.status === "completed") {
+        part.state.time.compacted = undefined
+        await Session.updatePart(part)
+      }
+    }
+    if (unprune.length) log.info("unpruned", { count: unprune.length })
+
     await Session.clearRevert(sessionID)
   }
 }
