@@ -73,6 +73,16 @@ export namespace Snapshot {
     return runPromiseInstance(SnapshotService.use((s) => s.checkout(hash, file)))
   }
 
+  /** Read a single file's content from a snapshot tree. Returns undefined if absent. */
+  export async function readFile(hash: string, file: string) {
+    return runPromiseInstance(SnapshotService.use((s) => s.readFile(hash, file)))
+  }
+
+  /** Check whether a file exists in a snapshot tree. */
+  export async function fileExists(hash: string, file: string) {
+    return runPromiseInstance(SnapshotService.use((s) => s.fileExists(hash, file)))
+  }
+
   export async function diff(hash: string) {
     return runPromiseInstance(SnapshotService.use((s) => s.diff(hash)))
   }
@@ -91,6 +101,8 @@ export namespace SnapshotService {
     readonly restore: (snapshot: string) => Effect.Effect<void>
     readonly revert: (patches: Snapshot.Patch[]) => Effect.Effect<void>
     readonly checkout: (hash: string, file: string) => Effect.Effect<void>
+    readonly readFile: (hash: string, file: string) => Effect.Effect<string | undefined>
+    readonly fileExists: (hash: string, file: string) => Effect.Effect<boolean>
     readonly diff: (hash: string) => Effect.Effect<string>
     readonly diffFull: (from: string, to: string) => Effect.Effect<Snapshot.FileDiff[]>
   }
@@ -293,8 +305,32 @@ export class SnapshotService extends ServiceMap.Service<SnapshotService, Snapsho
           cwd: worktree,
         })
         if (result.code !== 0) {
-          log.warn("checkout failed", { file, hash, exitCode: result.code, stderr: result.stderr })
+          const rel = path.relative(worktree, file)
+          const check = yield* git([...GIT_CORE, ...gitArgs(["ls-tree", hash, "--", rel])], {
+            cwd: worktree,
+          })
+          if (check.code === 0 && check.text.trim()) {
+            log.warn("checkout failed but file exists in tree", { file, hash })
+          } else {
+            log.info("file absent in snapshot, deleting", { file, hash })
+            yield* removeFile(file)
+          }
         }
+      })
+
+      const readFileFromTree = Effect.fn("SnapshotService.readFile")(function* (hash: string, file: string) {
+        const rel = path.relative(worktree, file)
+        const check = yield* git([...GIT_CORE, ...gitArgs(["ls-tree", hash, "--", rel])], { cwd: worktree })
+        if (check.code !== 0 || !check.text.trim()) return undefined
+        const result = yield* git([...GIT_CFG, ...gitArgs(["show", `${hash}:${rel}`])])
+        if (result.code !== 0) return undefined
+        return result.text
+      })
+
+      const fileExistsInTree = Effect.fn("SnapshotService.fileExists")(function* (hash: string, file: string) {
+        const rel = path.relative(worktree, file)
+        const check = yield* git([...GIT_CORE, ...gitArgs(["ls-tree", hash, "--", rel])], { cwd: worktree })
+        return check.code === 0 && !!check.text.trim()
       })
 
       const diff = Effect.fn("SnapshotService.diff")(function* (hash: string) {
@@ -385,6 +421,8 @@ export class SnapshotService extends ServiceMap.Service<SnapshotService, Snapsho
         restore,
         revert,
         checkout,
+        readFile: readFileFromTree,
+        fileExists: fileExistsInTree,
         diff,
         diffFull,
       })
