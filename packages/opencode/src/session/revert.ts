@@ -20,6 +20,7 @@ export namespace SessionRevert {
     sessionID: SessionID.zod,
     messageID: MessageID.zod,
     partID: PartID.zod.optional(),
+    skipFiles: z.boolean().optional(),
   })
   export type RevertInput = z.infer<typeof RevertInput>
 
@@ -58,9 +59,11 @@ export namespace SessionRevert {
 
     if (revert) {
       const session = await Session.get(input.sessionID)
-      revert.snapshot = session.revert?.snapshot ?? (await Snapshot.track())
-      await Snapshot.revert(patches)
-      if (revert.snapshot) revert.diff = await Snapshot.diff(revert.snapshot)
+      if (!input.skipFiles) {
+        revert.snapshot = session.revert?.snapshot ?? (await Snapshot.track())
+        await Snapshot.revert(patches)
+        if (revert.snapshot) revert.diff = await Snapshot.diff(revert.snapshot)
+      }
       const rangeMessages = all.filter((msg) => msg.info.id >= revert!.messageID)
       const diffs = await SessionSummary.computeDiff({ messages: rangeMessages })
       await Storage.write(["session_diff", input.sessionID], diffs)
