@@ -106,6 +106,8 @@ import type {
   QuestionReplyResponses,
   SessionAbortErrors,
   SessionAbortResponses,
+  SessionCheckConflictsErrors,
+  SessionCheckConflictsResponses,
   SessionChildrenErrors,
   SessionChildrenResponses,
   SessionCommandErrors,
@@ -122,6 +124,8 @@ import type {
   SessionGetResponses,
   SessionInitErrors,
   SessionInitResponses,
+  SessionKeepFilesErrors,
+  SessionKeepFilesResponses,
   SessionListResponses,
   SessionMessageErrors,
   SessionMessageResponses,
@@ -143,6 +147,8 @@ import type {
   SessionSummarizeResponses,
   SessionTodoErrors,
   SessionTodoResponses,
+  SessionUndoFilesErrors,
+  SessionUndoFilesResponses,
   SessionUnrevertErrors,
   SessionUnrevertResponses,
   SessionUnshareErrors,
@@ -2127,6 +2133,7 @@ export class Session2 extends HeyApiClient {
       messageID?: string
       partID?: string
       skipFiles?: boolean
+      skipMessages?: Array<string>
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2141,6 +2148,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "messageID" },
             { in: "body", key: "partID" },
             { in: "body", key: "skipFiles" },
+            { in: "body", key: "skipMessages" },
           ],
         },
       ],
@@ -2186,6 +2194,119 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/unrevert",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Undo files for a single message
+   *
+   * Undo file changes for a single assistant message that currently has its files kept (skipped). Removes it from the skipped list.
+   */
+  public undoFiles<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionUndoFilesResponses, SessionUndoFilesErrors, ThrowOnError>({
+      url: "/session/{sessionID}/undo-files/{messageID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Keep files for a single message
+   *
+   * Re-apply file changes for a single assistant message that currently has its files undone. Adds it to the skipped list.
+   */
+  public keepFiles<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionKeepFilesResponses, SessionKeepFilesErrors, ThrowOnError>({
+      url: "/session/{sessionID}/keep-files/{messageID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Check file conflicts for selective revert
+   *
+   * Check if selectively skipping certain messages during revert would cause file conflicts (same file touched by both a reverted and a kept message).
+   */
+  public checkConflicts<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      messageID?: string
+      skipMessages?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "messageID" },
+            { in: "body", key: "skipMessages" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionCheckConflictsResponses,
+      SessionCheckConflictsErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/check-conflicts",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }

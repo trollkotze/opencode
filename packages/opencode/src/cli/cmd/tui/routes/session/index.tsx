@@ -1013,6 +1013,22 @@ export function Session() {
     return messages().filter((x) => x.id >= messageID && x.role === "user")
   })
 
+  const revertSkipped = createMemo(() => new Set((revertInfo() as any)?.skipped ?? []))
+
+  const revertAssistants = createMemo(() => {
+    const messageID = revertMessageID()
+    if (!messageID) return []
+    const skipped = revertSkipped()
+    return messages()
+      .filter((x) => x.id >= messageID && x.role === "assistant")
+      .map((msg) => {
+        const parts = sync.data.part[msg.id] ?? []
+        const files = parts.filter((p: Part) => p.type === "patch").flatMap((p: any) => p.files as string[])
+        return { id: msg.id, files, kept: skipped.has(msg.id) }
+      })
+      .filter((x) => x.files.length > 0)
+  })
+
   const revert = createMemo(() => {
     const info = revertInfo()
     if (!info) return
@@ -1022,6 +1038,7 @@ export function Session() {
       reverted: revertRevertedMessages(),
       diff: info.diff,
       diffFiles: revertDiffFiles(),
+      assistants: revertAssistants(),
     }
   })
 
@@ -1089,6 +1106,13 @@ export function Session() {
                           }
                         }
 
+                        const toggle = async (mid: string, kept: boolean) => {
+                          const endpoint = kept ? "undo-files" : "keep-files"
+                          await sdk.fetch(`${sdk.url}/session/${route.sessionID}/${endpoint}/${mid}`, {
+                            method: "POST",
+                          })
+                        }
+
                         return (
                           <box
                             onMouseOver={() => setHover(true)}
@@ -1111,7 +1135,29 @@ export function Session() {
                                 <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
                                 restore
                               </text>
-                              <Show when={revert()!.diffFiles?.length}>
+                              <Show when={revert()!.assistants?.length}>
+                                <box marginTop={1}>
+                                  <For each={revert()!.assistants}>
+                                    {(entry) => (
+                                      <box>
+                                        <text
+                                          fg={entry.kept ? theme.diffAdded : theme.diffRemoved}
+                                          onMouseUp={(e: any) => {
+                                            e.stopPropagation?.()
+                                            toggle(entry.id, entry.kept)
+                                          }}
+                                        >
+                                          {entry.kept ? "[kept]" : "[undone]"}{" "}
+                                          <span style={{ fg: theme.text }}>
+                                            {entry.files.map((f: string) => path.basename(f)).join(", ")}
+                                          </span>
+                                        </text>
+                                      </box>
+                                    )}
+                                  </For>
+                                </box>
+                              </Show>
+                              <Show when={!revert()!.assistants?.length && revert()!.diffFiles?.length}>
                                 <box marginTop={1}>
                                   <For each={revert()!.diffFiles}>
                                     {(file) => (
