@@ -985,6 +985,128 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .post(
+      "/:sessionID/undo-files/:messageID",
+      describeRoute({
+        summary: "Undo files for a single message",
+        description:
+          "Undo file changes for a single assistant message that currently has its files kept (skipped). Removes it from the skipped list.",
+        operationId: "session.undoFiles",
+        responses: {
+          200: {
+            description: "Updated session",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+          messageID: MessageID.zod,
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const session = await SessionRevert.undoFiles({
+          sessionID: params.sessionID,
+          messageID: params.messageID,
+        })
+        return c.json(session)
+      },
+    )
+    .post(
+      "/:sessionID/keep-files/:messageID",
+      describeRoute({
+        summary: "Keep files for a single message",
+        description:
+          "Re-apply file changes for a single assistant message that currently has its files undone. Adds it to the skipped list.",
+        operationId: "session.keepFiles",
+        responses: {
+          200: {
+            description: "Updated session",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+          messageID: MessageID.zod,
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const session = await SessionRevert.keepFiles({
+          sessionID: params.sessionID,
+          messageID: params.messageID,
+        })
+        return c.json(session)
+      },
+    )
+    .post(
+      "/:sessionID/check-conflicts",
+      describeRoute({
+        summary: "Check file conflicts for selective revert",
+        description:
+          "Check if selectively skipping certain messages during revert would cause file conflicts (same file touched by both a reverted and a kept message).",
+        operationId: "session.checkConflicts",
+        responses: {
+          200: {
+            description: "List of conflicts (empty if none)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      file: { type: "string" },
+                      reverted: { type: "string" },
+                      kept: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          messageID: MessageID.zod,
+          skipMessages: MessageID.zod.array(),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const result = await SessionRevert.checkConflicts({
+          sessionID,
+          ...body,
+        })
+        return c.json(result)
+      },
+    )
+    .post(
       "/:sessionID/permissions/:permissionID",
       describeRoute({
         summary: "Respond to permission",

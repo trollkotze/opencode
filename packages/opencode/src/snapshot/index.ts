@@ -69,6 +69,10 @@ export namespace Snapshot {
     return runPromiseInstance(SnapshotService.use((s) => s.revert(patches)))
   }
 
+  export async function checkout(hash: string, file: string) {
+    return runPromiseInstance(SnapshotService.use((s) => s.checkout(hash, file)))
+  }
+
   export async function diff(hash: string) {
     return runPromiseInstance(SnapshotService.use((s) => s.diff(hash)))
   }
@@ -86,6 +90,7 @@ export namespace SnapshotService {
     readonly patch: (hash: string) => Effect.Effect<Snapshot.Patch>
     readonly restore: (snapshot: string) => Effect.Effect<void>
     readonly revert: (patches: Snapshot.Patch[]) => Effect.Effect<void>
+    readonly checkout: (hash: string, file: string) => Effect.Effect<void>
     readonly diff: (hash: string) => Effect.Effect<string>
     readonly diffFull: (from: string, to: string) => Effect.Effect<Snapshot.FileDiff[]>
   }
@@ -282,6 +287,16 @@ export class SnapshotService extends ServiceMap.Service<SnapshotService, Snapsho
         }
       })
 
+      const checkout = Effect.fn("SnapshotService.checkout")(function* (hash: string, file: string) {
+        log.info("checkout", { file, hash })
+        const result = yield* git([...GIT_CORE, ...gitArgs(["checkout", hash, "--", file])], {
+          cwd: worktree,
+        })
+        if (result.code !== 0) {
+          log.warn("checkout failed", { file, hash, exitCode: result.code, stderr: result.stderr })
+        }
+      })
+
       const diff = Effect.fn("SnapshotService.diff")(function* (hash: string) {
         yield* add
         const result = yield* git([...GIT_CFG_QUOTE, ...gitArgs(["diff", "--no-ext-diff", hash, "--", "."])], {
@@ -369,6 +384,7 @@ export class SnapshotService extends ServiceMap.Service<SnapshotService, Snapsho
         patch,
         restore,
         revert,
+        checkout,
         diff,
         diffFull,
       })

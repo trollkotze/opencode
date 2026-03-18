@@ -16,6 +16,24 @@ export function DialogMessage(props: {
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
   const route = useRoute()
 
+  function prompt() {
+    const msg = message()
+    if (!msg || !props.setPrompt) return
+    const parts = sync.data.part[msg.id]
+    props.setPrompt(
+      parts.reduce(
+        (agg, part) => {
+          if (part.type === "text") {
+            if (!part.synthetic) agg.input += part.text
+          }
+          if (part.type === "file") agg.parts.push(part)
+          return agg
+        },
+        { input: "", parts: [] as PromptInfo["parts"] },
+      ),
+    )
+  }
+
   return (
     <DialogSelect
       title="Message Actions"
@@ -27,27 +45,11 @@ export function DialogMessage(props: {
           onSelect: (dialog) => {
             const msg = message()
             if (!msg) return
-
             sdk.client.session.revert({
               sessionID: props.sessionID,
               messageID: msg.id,
             })
-
-            if (props.setPrompt) {
-              const parts = sync.data.part[msg.id]
-              const promptInfo = parts.reduce(
-                (agg, part) => {
-                  if (part.type === "text") {
-                    if (!part.synthetic) agg.input += part.text
-                  }
-                  if (part.type === "file") agg.parts.push(part)
-                  return agg
-                },
-                { input: "", parts: [] as PromptInfo["parts"] },
-              )
-              props.setPrompt(promptInfo)
-            }
-
+            prompt()
             dialog.clear()
           },
         },
@@ -58,28 +60,12 @@ export function DialogMessage(props: {
           onSelect: (dialog) => {
             const msg = message()
             if (!msg) return
-
             sdk.client.session.revert({
               sessionID: props.sessionID,
               messageID: msg.id,
               skipFiles: true,
             })
-
-            if (props.setPrompt) {
-              const parts = sync.data.part[msg.id]
-              const promptInfo = parts.reduce(
-                (agg, part) => {
-                  if (part.type === "text") {
-                    if (!part.synthetic) agg.input += part.text
-                  }
-                  if (part.type === "file") agg.parts.push(part)
-                  return agg
-                },
-                { input: "", parts: [] as PromptInfo["parts"] },
-              )
-              props.setPrompt(promptInfo)
-            }
-
+            prompt()
             dialog.clear()
           },
         },

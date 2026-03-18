@@ -155,6 +155,7 @@ export namespace Session {
           partID: PartID.zod.optional(),
           snapshot: z.string().optional(),
           diff: z.string().optional(),
+          skipped: MessageID.zod.array().optional(),
         })
         .optional(),
     })
