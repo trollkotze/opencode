@@ -4,6 +4,11 @@ import { DialogSelect } from "@tui/ui/dialog-select"
 import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { Clipboard } from "@tui/util/clipboard"
+import { useDialog } from "../../ui/dialog"
+import { DialogPart } from "./dialog-part"
+import { DialogEditPart } from "./dialog-part"
+import { useRenderer } from "@opentui/solid"
+import { Editor } from "../../util/editor"
 import type { PromptInfo } from "@tui/component/prompt/history"
 import { useLocal } from "@tui/context/local"
 import { useToast } from "../../ui/toast"
@@ -18,6 +23,8 @@ export function DialogMessage(props: {
   const sdk = useSDK()
   const local = useLocal()
   const toast = useToast()
+  const dialog = useDialog()
+  const renderer = useRenderer()
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
   const route = useRoute()
   const parts = createMemo(() => sync.data.part[props.messageID] ?? [])
@@ -59,6 +66,11 @@ export function DialogMessage(props: {
     dialog.clear()
   }
 
+  const textPart = createMemo(() => {
+    const parts = sync.data.part[props.messageID] ?? []
+    return parts.find((p) => p.type === "text" && !p.synthetic)
+  })
+
   function prompt() {
     const msg = message()
     if (!msg || !props.setPrompt) return
@@ -96,12 +108,65 @@ export function DialogMessage(props: {
                 onSelect: (dialog: { clear(): void }) => resume(dialog, true),
               },
             ]
+          : []
+        ),
+        ...(textPart()
+          ? [
+              {
+                title: "Edit text",
+                value: "message.edit",
+                description: "edit message text",
+                onSelect: () => {
+                  const tp = textPart()!
+                  dialog.replace(() => (
+                    <DialogEditPart
+                      text={(tp as any).text}
+                      onSave={async (text) => {
+                        await sdk.fetch(
+                          `${sdk.url}/session/${props.sessionID}/message/${props.messageID}/part/${tp.id}`,
+                          {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ ...tp, text }),
+                          },
+                        )
+                        dialog.clear()
+                      }}
+                    />
+                  ))
+                },
+              },
+              ...(process.env["VISUAL"] || process.env["EDITOR"]
+                ? [
+                    {
+                      title: "Edit in $EDITOR",
+                      value: "message.editor",
+                      description: process.env["VISUAL"] || process.env["EDITOR"]!,
+                      onSelect: async () => {
+                        const tp = textPart()!
+                        dialog.clear()
+                        const result = await Editor.open({ value: (tp as any).text, renderer })
+                        if (result !== undefined) {
+                          await sdk.fetch(
+                            `${sdk.url}/session/${props.sessionID}/message/${props.messageID}/part/${tp.id}`,
+                            {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ ...tp, text: result }),
+                            },
+                          )
+                        }
+                      },
+                    },
+                  ]
+                : []),
+            ]
           : []),
         {
           title: "Revert",
           value: "session.revert",
           description: "undo messages and file changes",
-          onSelect: (dialog) => {
+          onSelect: () => {
             const msg = message()
             if (!msg) return
             sdk.client.session.revert({
@@ -116,7 +181,7 @@ export function DialogMessage(props: {
           title: "Revert messages",
           value: "session.revert.messages",
           description: "keep file changes",
-          onSelect: (dialog) => {
+          onSelect: () => {
             const msg = message()
             if (!msg) return
             sdk.client.session.revert({
@@ -132,7 +197,7 @@ export function DialogMessage(props: {
           title: "Copy",
           value: "message.copy",
           description: "message text to clipboard",
-          onSelect: async (dialog) => {
+          onSelect: async () => {
             const msg = message()
             if (!msg) return
 
@@ -152,7 +217,7 @@ export function DialogMessage(props: {
           title: "Fork",
           value: "session.fork",
           description: "create a new session",
-          onSelect: async (dialog) => {
+          onSelect: async () => {
             const result = await sdk.client.session.fork({
               sessionID: props.sessionID,
               messageID: props.messageID,

@@ -56,6 +56,7 @@ import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
+import { DialogPart } from "./dialog-part"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
@@ -599,6 +600,43 @@ export function Session() {
               variant: "error",
             })
           })
+      },
+    },
+    {
+      title: "Manage context",
+      value: "session.context",
+      category: "Session",
+      enabled: messages().length > 0,
+      onSelect: (dialog) => {
+        const revertID = session()?.revert?.messageID
+        const visible = messages().filter((m) => !revertID || m.id < revertID)
+        const parts = visible.flatMap((m) => {
+          const list = sync.data.part[m.id] ?? []
+          return list
+            .filter((p) => p.type === "text" || p.type === "tool" || p.type === "reasoning")
+            .map((p) => ({
+              value: p.id,
+              title:
+                p.type === "text"
+                  ? (p as any).text?.slice(0, 60).replace(/\n/g, " ") + ((p as any).text?.length > 60 ? "..." : "")
+                  : p.type === "tool"
+                    ? `${(p as any).tool}: ${JSON.stringify((p as any).state?.input ?? {}).slice(0, 40)}`
+                    : "reasoning",
+              description: `${m.role} · ${p.type}${(p as any).compacted ? " [compacted]" : ""}${(p as any).ignored ? " [excluded]" : ""}`,
+              category: m.role === "user" ? "User" : "Assistant",
+              onSelect: () => {
+                dialog.replace(() => (
+                  <DialogPart
+                    sessionID={route.sessionID}
+                    messageID={m.id}
+                    partID={p.id}
+                    role={m.role as "user" | "assistant"}
+                  />
+                ))
+              },
+            }))
+        })
+        dialog.replace(() => <DialogSelect title="Manage Context" options={parts} />)
       },
     },
     {
@@ -1547,11 +1585,25 @@ const PART_MAPPING = {
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
   const { theme, subtleSyntax } = useTheme()
   const ctx = use()
+  const dialog = useDialog()
+  const compacted = createMemo(() => !!props.part.compacted)
   const content = createMemo(() => {
     // Filter out redacted reasoning chunks from OpenRouter
     // OpenRouter sends encrypted reasoning data that appears as [REDACTED]
     return props.part.text.replace("[REDACTED]", "").trim()
   })
+
+  function openActions() {
+    dialog.replace(() => (
+      <DialogPart
+        sessionID={props.message.sessionID}
+        messageID={props.message.id}
+        partID={props.part.id}
+        role="assistant"
+      />
+    ))
+  }
+
   return (
     <Show when={content() && ctx.showThinking()}>
       <box
@@ -1562,16 +1614,22 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
         border={["left"]}
         customBorderChars={SplitBorder.customBorderChars}
         borderColor={theme.backgroundElement}
+        onMouseUp={openActions}
       >
-        <code
-          filetype="markdown"
-          drawUnstyledText={false}
-          streaming={true}
-          syntaxStyle={subtleSyntax()}
-          content={"_Thinking:_ " + content()}
-          conceal={ctx.conceal()}
-          fg={theme.textMuted}
-        />
+        <Show when={compacted()}>
+          <text fg={theme.textMuted}>[reasoning compacted]</text>
+        </Show>
+        <Show when={!compacted()}>
+          <code
+            filetype="markdown"
+            drawUnstyledText={false}
+            streaming={true}
+            syntaxStyle={subtleSyntax()}
+            content={"_Thinking:_ " + content()}
+            conceal={ctx.conceal()}
+            fg={theme.textMuted}
+          />
+        </Show>
       </box>
     </Show>
   )
@@ -1580,30 +1638,50 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const dialog = useDialog()
+  const compacted = createMemo(() => !!props.part.compacted)
+  const excluded = createMemo(() => !!props.part.ignored)
+
+  function openActions() {
+    dialog.replace(() => (
+      <DialogPart
+        sessionID={props.message.sessionID}
+        messageID={props.message.id}
+        partID={props.part.id}
+        role="assistant"
+      />
+    ))
+  }
+
   return (
     <Show when={props.part.text.trim()}>
-      <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <Switch>
-          <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
-            <markdown
-              syntaxStyle={syntax()}
-              streaming={true}
-              content={props.part.text.trim()}
-              conceal={ctx.conceal()}
-            />
-          </Match>
-          <Match when={!Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
-            <code
-              filetype="markdown"
-              drawUnstyledText={false}
-              streaming={true}
-              syntaxStyle={syntax()}
-              content={props.part.text.trim()}
-              conceal={ctx.conceal()}
-              fg={theme.text}
-            />
-          </Match>
-        </Switch>
+      <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0} onMouseUp={openActions}>
+        <Show when={compacted() || excluded()}>
+          <text fg={theme.textMuted}>{compacted() ? "[compacted]" : "[excluded from context]"}</text>
+        </Show>
+        <Show when={!compacted() && !excluded()}>
+          <Switch>
+            <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
+              <markdown
+                syntaxStyle={syntax()}
+                streaming={true}
+                content={props.part.text.trim()}
+                conceal={ctx.conceal()}
+              />
+            </Match>
+            <Match when={!Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
+              <code
+                filetype="markdown"
+                drawUnstyledText={false}
+                streaming={true}
+                syntaxStyle={syntax()}
+                content={props.part.text.trim()}
+                conceal={ctx.conceal()}
+                fg={theme.text}
+              />
+            </Match>
+          </Switch>
+        </Show>
       </box>
     </Show>
   )

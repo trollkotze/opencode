@@ -392,6 +392,10 @@ export type TextPart = {
   text: string
   synthetic?: boolean
   ignored?: boolean
+  compacted?: {
+    time: number
+    summary?: string
+  }
   time?: {
     start: number
     end?: number
@@ -422,6 +426,10 @@ export type ReasoningPart = {
   messageID: string
   type: "reasoning"
   text: string
+  compacted?: {
+    time: number
+    summary?: string
+  }
   metadata?: {
     [key: string]: unknown
   }
@@ -1742,6 +1750,10 @@ export type TextPartInput = {
   text: string
   synthetic?: boolean
   ignored?: boolean
+  compacted?: {
+    time: number
+    summary?: string
+  }
   time?: {
     start: number
     end?: number

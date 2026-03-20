@@ -106,6 +106,12 @@ export namespace MessageV2 {
     text: z.string(),
     synthetic: z.boolean().optional(),
     ignored: z.boolean().optional(),
+    compacted: z
+      .object({
+        time: z.number(),
+        summary: z.string().optional(),
+      })
+      .optional(),
     time: z
       .object({
         start: z.number(),
@@ -121,6 +127,12 @@ export namespace MessageV2 {
   export const ReasoningPart = PartBase.extend({
     type: z.literal("reasoning"),
     text: z.string(),
+    compacted: z
+      .object({
+        time: z.number(),
+        summary: z.string().optional(),
+      })
+      .optional(),
     metadata: z.record(z.string(), z.any()).optional(),
     time: z.object({
       start: z.number(),
@@ -628,11 +640,19 @@ export namespace MessageV2 {
         }
         result.push(userMessage)
         for (const part of msg.parts) {
-          if (part.type === "text" && !part.ignored)
-            userMessage.parts.push({
-              type: "text",
-              text: part.text,
-            })
+          if (part.type === "text" && !part.ignored) {
+            if (part.compacted) {
+              userMessage.parts.push({
+                type: "text",
+                text: part.compacted.summary ?? "[Previous text content compacted]",
+              })
+            } else {
+              userMessage.parts.push({
+                type: "text",
+                text: part.text,
+              })
+            }
+          }
           // text/plain and directory files are converted into text parts, ignore them
           if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
             if (options?.stripMedia && isMedia(part.mime)) {
@@ -684,12 +704,20 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text")
-            assistantMessage.parts.push({
-              type: "text",
-              text: part.text,
-              ...(differentModel ? {} : { providerMetadata: part.metadata }),
-            })
+          if (part.type === "text" && !part.ignored) {
+            if (part.compacted) {
+              assistantMessage.parts.push({
+                type: "text",
+                text: part.compacted.summary ?? "[Previous text content compacted]",
+              })
+            } else {
+              assistantMessage.parts.push({
+                type: "text",
+                text: part.text,
+                ...(differentModel ? {} : { providerMetadata: part.metadata }),
+              })
+            }
+          }
           if (part.type === "step-start")
             assistantMessage.parts.push({
               type: "step-start",
@@ -747,7 +775,7 @@ export namespace MessageV2 {
                 ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
               })
           }
-          if (part.type === "reasoning") {
+          if (part.type === "reasoning" && !part.compacted) {
             assistantMessage.parts.push({
               type: "reasoning",
               text: part.text,
