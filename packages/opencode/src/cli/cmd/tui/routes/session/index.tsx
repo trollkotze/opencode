@@ -54,6 +54,7 @@ import { useKeybind } from "@tui/context/keybind"
 import { Header } from "./header"
 import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
+import { DialogSelect } from "../../ui/dialog-select"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
@@ -143,7 +144,8 @@ export function Session() {
   })
 
   const lastAssistant = createMemo(() => {
-    return messages().findLast((x) => x.role === "assistant")
+    const revertID = session()?.revert?.messageID
+    return messages().findLast((x) => x.role === "assistant" && (!revertID || x.id < revertID))
   })
 
   const dimensions = useTerminalDimensions()
@@ -563,6 +565,41 @@ export function Session() {
           sessionID: route.sessionID,
           messageID: message.id,
         })
+      },
+    },
+    {
+      title: "Continue from error",
+      value: "session.continue",
+      category: "Session",
+      enabled: (() => {
+        const revertID = session()?.revert?.messageID
+        const last = messages().findLast((x) => x.role === "assistant" && (!revertID || x.id < revertID)) as
+          | AssistantMessage
+          | undefined
+        return !!(last?.error && last.error.name !== "MessageAbortedError")
+      })(),
+      onSelect: (dialog) => {
+        dialog.clear()
+        const model = local.model.current()
+        if (!model) {
+          toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
+          return
+        }
+        if (!supportsContinuation(model.providerID)) {
+          dialog.replace(() => <DialogContinueModel sessionID={route.sessionID} />)
+          return
+        }
+        sdk.client.session
+          .continue({
+            sessionID: route.sessionID,
+            model: { providerID: model.providerID, modelID: model.modelID },
+          })
+          .catch((e: unknown) => {
+            toast.show({
+              message: e instanceof Error ? e.message : "Failed to continue",
+              variant: "error",
+            })
+          })
       },
     },
     {
@@ -1370,10 +1407,67 @@ function UserMessage(props: {
   )
 }
 
+const CONTINUATION_PROVIDERS = new Set([
+  "anthropic",
+  "google",
+  "google-vertex",
+  "openai",
+  "azure",
+  "opencode",
+  "openrouter",
+])
+
+function supportsContinuation(providerID: string) {
+  if (CONTINUATION_PROVIDERS.has(providerID)) return true
+  // gateway providers that route to anthropic/google/openai
+  if (providerID.includes("anthropic") || providerID.includes("openai") || providerID.includes("google")) return true
+  return false
+}
+
+function DialogContinueModel(props: { sessionID: string }) {
+  const local = useLocal()
+  const sync = useSync()
+  const dialog = useDialog()
+  const sdk = useSDK()
+  const toast = useToast()
+
+  const options = createMemo(() => {
+    return sync.data.provider.flatMap((provider) =>
+      Object.entries(provider.models)
+        .filter(([_, info]) => info.status !== "deprecated" && supportsContinuation(provider.id))
+        .map(([id, info]) => ({
+          value: { providerID: provider.id, modelID: id },
+          title: info.name ?? id,
+          description: provider.name,
+          onSelect: () => {
+            local.model.set({ providerID: provider.id, modelID: id }, { recent: true })
+            dialog.clear()
+            sdk.client.session
+              .continue({
+                sessionID: props.sessionID,
+                model: { providerID: provider.id, modelID: id },
+              })
+              .catch((e: unknown) => {
+                toast.show({
+                  message: e instanceof Error ? e.message : "Failed to continue",
+                  variant: "error",
+                })
+              })
+          },
+        })),
+    )
+  })
+
+  return <DialogSelect title="Select model for continuation" options={options()} />
+}
+
 function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
   const local = useLocal()
   const { theme } = useTheme()
   const sync = useSync()
+  const sdk = useSDK()
+  const dialog = useDialog()
+  const toast = useToast()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
 
   const final = createMemo(() => {
@@ -1387,6 +1481,36 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     if (!user || !user.time) return 0
     return props.message.time.completed - user.time.created
   })
+
+  const nonretryable = createMemo(() => {
+    const err = props.message.error
+    if (!err) return false
+    if (err.name === "MessageAbortedError") return false
+    return true
+  })
+
+  function handleContinue() {
+    const model = local.model.current()
+    if (!model) {
+      toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
+      return
+    }
+    if (!supportsContinuation(model.providerID)) {
+      dialog.replace(() => <DialogContinueModel sessionID={props.message.sessionID} />)
+      return
+    }
+    sdk.client.session
+      .continue({
+        sessionID: props.message.sessionID,
+        model: { providerID: model.providerID, modelID: model.modelID },
+      })
+      .catch((e: unknown) => {
+        toast.show({
+          message: e instanceof Error ? e.message : "Failed to continue",
+          variant: "error",
+        })
+      })
+  }
 
   const keybind = useKeybind()
 
@@ -1427,6 +1551,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           borderColor={theme.error}
         >
           <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
+        </box>
+      </Show>
+      <Show when={nonretryable() && props.last}>
+        <box paddingLeft={3} paddingTop={1} onMouseUp={handleContinue}>
+          <text fg={theme.accent}>{"▶ continue"}</text>
         </box>
       </Show>
       <Switch>

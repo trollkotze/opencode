@@ -384,6 +384,48 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .post(
+      "/:sessionID/continue",
+      describeRoute({
+        summary: "Continue from error",
+        description:
+          "Continue a session from a failed assistant message, reusing any partial content as context for the new attempt.",
+        operationId: "session.continue",
+        responses: {
+          200: {
+            description: "Continued message",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    info: MessageV2.Assistant,
+                    parts: MessageV2.Part.array(),
+                  }),
+                ),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator("json", SessionPrompt.ContinueInput.omit({ sessionID: true })),
+      async (c) => {
+        c.status(200)
+        c.header("Content-Type", "application/json")
+        return stream(c, async (stream) => {
+          const sessionID = c.req.valid("param").sessionID
+          const body = c.req.valid("json")
+          const msg = await SessionPrompt.continueFromError({ ...body, sessionID })
+          stream.write(JSON.stringify(msg))
+        })
+      },
+    )
+    .post(
       "/:sessionID/share",
       describeRoute({
         summary: "Share session",

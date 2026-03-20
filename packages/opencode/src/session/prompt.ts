@@ -187,6 +187,63 @@ export namespace SessionPrompt {
     return loop({ sessionID: input.sessionID })
   })
 
+  export const ContinueInput = z.object({
+    sessionID: SessionID.zod,
+    model: z
+      .object({
+        providerID: ProviderID.zod,
+        modelID: ModelID.zod,
+      })
+      .optional(),
+  })
+  export type ContinueInput = z.infer<typeof ContinueInput>
+
+  export const continueFromError = fn(ContinueInput, async (input) => {
+    assertNotBusy(input.sessionID)
+    const session = await Session.get(input.sessionID)
+    await SessionRevert.cleanup(session)
+
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
+
+    // find the last assistant message and its parent user message
+    let errored: MessageV2.Assistant | undefined
+    let user: MessageV2.User | undefined
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (!errored && msg.info.role === "assistant" && msg.info.error) {
+        errored = msg.info as MessageV2.Assistant
+      }
+      if (errored && msg.info.role === "user") {
+        user = msg.info as MessageV2.User
+        break
+      }
+    }
+    if (!errored) throw new Error("No errored assistant message found")
+    if (!user) throw new Error("No user message found before errored assistant message")
+
+    const parts = await MessageV2.parts(errored.id)
+    const hasContent = parts.some((p) => p.type === "text" || p.type === "tool" || p.type === "reasoning")
+
+    // if the model is being changed, update the user message so the loop picks it up
+    if (input.model) {
+      user.model = input.model
+      await Session.updateMessage(user)
+    }
+
+    if (hasContent) {
+      // clear the error so toModelMessages includes this message's content
+      errored.error = undefined
+      errored.time.completed = undefined
+      await Session.updateMessage(errored)
+    } else {
+      // no content was streamed before the error — remove the empty message
+      await Session.removeMessage({ sessionID: input.sessionID, messageID: errored.id })
+    }
+
+    await Session.touch(input.sessionID)
+    return loop({ sessionID: input.sessionID })
+  })
+
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
     const parts: PromptInput["parts"] = [
       {

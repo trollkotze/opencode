@@ -851,7 +851,6 @@ export type Session = {
     partID?: string
     snapshot?: string
     diff?: string
-    skipped?: Array<string>
   }
 }
 
@@ -1723,7 +1722,6 @@ export type GlobalSession = {
     partID?: string
     snapshot?: string
     diff?: string
-    skipped?: Array<string>
   }
   project: ProjectSummary | null
 }
@@ -3641,7 +3639,6 @@ export type SessionRevertData = {
     messageID: string
     partID?: string
     skipFiles?: boolean
-    skipMessages?: Array<string>
   }
   path: {
     sessionID: string
@@ -3708,117 +3705,6 @@ export type SessionUnrevertResponses = {
 }
 
 export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnrevertResponses]
-
-export type SessionUndoFilesData = {
-  body?: never
-  path: {
-    sessionID: string
-    messageID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/session/{sessionID}/undo-files/{messageID}"
-}
-
-export type SessionUndoFilesErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-}
-
-export type SessionUndoFilesError = SessionUndoFilesErrors[keyof SessionUndoFilesErrors]
-
-export type SessionUndoFilesResponses = {
-  /**
-   * Updated session
-   */
-  200: Session
-}
-
-export type SessionUndoFilesResponse = SessionUndoFilesResponses[keyof SessionUndoFilesResponses]
-
-export type SessionKeepFilesData = {
-  body?: never
-  path: {
-    sessionID: string
-    messageID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/session/{sessionID}/keep-files/{messageID}"
-}
-
-export type SessionKeepFilesErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-}
-
-export type SessionKeepFilesError = SessionKeepFilesErrors[keyof SessionKeepFilesErrors]
-
-export type SessionKeepFilesResponses = {
-  /**
-   * Updated session
-   */
-  200: Session
-}
-
-export type SessionKeepFilesResponse = SessionKeepFilesResponses[keyof SessionKeepFilesResponses]
-
-export type SessionCheckConflictsData = {
-  body?: {
-    messageID: string
-    skipMessages: Array<string>
-  }
-  path: {
-    sessionID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/session/{sessionID}/check-conflicts"
-}
-
-export type SessionCheckConflictsErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-}
-
-export type SessionCheckConflictsError = SessionCheckConflictsErrors[keyof SessionCheckConflictsErrors]
-
-export type SessionCheckConflictsResponses = {
-  /**
-   * List of conflicts (empty if none)
-   */
-  200: Array<{
-    file?: string
-    reverted?: string
-    kept?: string
-  }>
-}
-
-export type SessionCheckConflictsResponse = SessionCheckConflictsResponses[keyof SessionCheckConflictsResponses]
 
 export type PermissionRespondData = {
   body?: {

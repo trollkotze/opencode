@@ -28,8 +28,8 @@ export namespace ProviderError {
   function isOpenAiErrorRetryable(e: APICallError) {
     const status = e.statusCode
     if (!status) return e.isRetryable
-    // openai sometimes returns 404 for models that are actually available
-    return status === 404 || e.isRetryable
+    // openai sometimes returns 403/404 for models that are actually available
+    return status === 403 || status === 404 || e.isRetryable
   }
 
   // Providers not reliably handled in this function:
