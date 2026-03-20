@@ -389,7 +389,7 @@ export const SessionRoutes = lazy(() =>
         summary: "Continue from error",
         description:
           "Continue a session from a failed assistant message, reusing any partial content as context for the new attempt.",
-        operationId: "session.continue",
+        operationId: "session.resume",
         responses: {
           200: {
             description: "Continued message",

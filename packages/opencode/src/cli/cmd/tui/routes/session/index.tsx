@@ -576,7 +576,7 @@ export function Session() {
         const last = messages().findLast((x) => x.role === "assistant" && (!revertID || x.id < revertID)) as
           | AssistantMessage
           | undefined
-        return !!(last?.error && last.error.name !== "MessageAbortedError")
+        return !!last?.error
       })(),
       onSelect: (dialog) => {
         dialog.clear()
@@ -590,7 +590,7 @@ export function Session() {
           return
         }
         sdk.client.session
-          .continue({
+          .resume({
             sessionID: route.sessionID,
             model: { providerID: model.providerID, modelID: model.modelID },
           })
@@ -1443,7 +1443,7 @@ function DialogContinueModel(props: { sessionID: string }) {
             local.model.set({ providerID: provider.id, modelID: id }, { recent: true })
             dialog.clear()
             sdk.client.session
-              .continue({
+              .resume({
                 sessionID: props.sessionID,
                 model: { providerID: provider.id, modelID: id },
               })
@@ -1482,11 +1482,8 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     return props.message.time.completed - user.time.created
   })
 
-  const nonretryable = createMemo(() => {
-    const err = props.message.error
-    if (!err) return false
-    if (err.name === "MessageAbortedError") return false
-    return true
+  const continuable = createMemo(() => {
+    return !!props.message.error
   })
 
   function handleContinue() {
@@ -1500,7 +1497,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       return
     }
     sdk.client.session
-      .continue({
+      .resume({
         sessionID: props.message.sessionID,
         model: { providerID: model.providerID, modelID: model.modelID },
       })
@@ -1553,7 +1550,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
         </box>
       </Show>
-      <Show when={nonretryable() && props.last}>
+      <Show when={continuable() && props.last}>
         <box paddingLeft={3} paddingTop={1} onMouseUp={handleContinue}>
           <text fg={theme.accent}>{"▶ continue"}</text>
         </box>
