@@ -23,6 +23,16 @@ import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission"
 import { Auth } from "@/auth"
 
+export class InvalidToolCallError extends Error {
+  constructor(
+    public toolName: string,
+    public errorMessage: string,
+  ) {
+    super(`Invalid tool call: ${toolName} - ${errorMessage}`)
+    this.name = "InvalidToolCallError"
+  }
+}
+
 export namespace LLM {
   const log = Log.create({ service: "llm" })
   export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -227,7 +237,9 @@ export namespace LLM {
       tools: {
         ids: Object.keys(resolved),
         active: Object.keys(resolved).filter((x) => x !== "invalid"),
-        toolDefs: opts.toolDefs,
+        toolDefs: opts.toolDefs
+          ? Object.fromEntries(Object.entries(opts.toolDefs).filter(([k]) => resolved[k]))
+          : undefined,
       },
       providerOptions: ProviderTransform.providerOptions(input.model, params.options),
       headers: {
@@ -400,14 +412,7 @@ export namespace LLM {
             toolName: lower,
           }
         }
-        return {
-          ...failed.toolCall,
-          input: JSON.stringify({
-            tool: failed.toolCall.toolName,
-            error: failed.error.message,
-          }),
-          toolName: "invalid",
-        }
+        throw new InvalidToolCallError(failed.toolCall.toolName, failed.error.message)
       },
       temperature: params.temperature,
       topP: params.topP,

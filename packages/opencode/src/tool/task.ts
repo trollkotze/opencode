@@ -26,6 +26,11 @@ const parameters = z.object({
 })
 
 export const TaskTool = Tool.define("task", async (ctx) => {
+  const isToolAllowed = (toolId: string) => {
+    if (!ctx?.agent) return true
+    return !PermissionNext.disabled([toolId], ctx.agent.permission).has(toolId)
+  }
+
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
 
   // Filter agents by permissions if agent provided
@@ -34,12 +39,29 @@ export const TaskTool = Tool.define("task", async (ctx) => {
     ? agents.filter((a) => PermissionNext.evaluate("task", a.name, caller.permission).action !== "deny")
     : agents
 
+  const whenNotToUse: string[] = []
+  if (isToolAllowed("read") || isToolAllowed("glob")) {
+    whenNotToUse.push(
+      `- If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly`,
+    )
+  }
+  if (isToolAllowed("glob")) {
+    whenNotToUse.push(
+      `- If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly`,
+    )
+  }
+  if (isToolAllowed("read")) {
+    whenNotToUse.push(
+      `- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly`,
+    )
+  }
+
   const description = DESCRIPTION.replace(
     "{agents}",
     accessibleAgents
       .map((a) => `- ${a.name}: ${a.description ?? "This subagent should only be called manually by the user."}`)
       .join("\n"),
-  )
+  ).replace("${WHEN_NOT_TO_USE_TASK}", whenNotToUse.join("\n"))
   return {
     description,
     parameters,

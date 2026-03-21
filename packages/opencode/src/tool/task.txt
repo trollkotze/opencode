@@ -9,9 +9,7 @@ When to use the Task tool:
 - When you are instructed to execute custom slash commands. Use the Task tool with the slash command invocation as the entire prompt. The slash command can take arguments. For example: Task(description="Check the file", prompt="/check-file path/to/file.py")
 
 When NOT to use the Task tool:
-- If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
-- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly
+${WHEN_NOT_TO_USE_TASK}
 - Other tasks that are not related to the agent descriptions above
 
 
@@ -33,8 +31,8 @@ Example usage (NOTE: The agents below are fictional examples for illustration on
 <example>
 user: "Please write a function that checks if a number is prime"
 assistant: Sure let me write a function that checks if a number is prime
-assistant: First let me use the Write tool to write a function that checks if a number is prime
-assistant: I'm going to use the Write tool to write the following code:
+assistant: First let me use the PrimeNumberWriter tool to write a function that checks if a number is prime
+assistant: I'm going to use the PrimeNumberWriter tool to write the following code:
 <code>
 function isPrime(n) {
   if (n <= 1) return false

@@ -77,7 +77,8 @@ export namespace Agent {
     const result: Record<string, Info> = {
       build: {
         name: "build",
-        description: "The default agent. Executes tools based on configured permissions.\nFor codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped `grep` or `read` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.",
+        description:
+          "The default agent. Executes tools based on configured permissions.\nFor codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped `grep` or `read` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.",
         options: {},
         permission: PermissionNext.merge(
           defaults,
@@ -92,7 +93,8 @@ export namespace Agent {
       },
       plan: {
         name: "plan",
-        description: "Plan mode. Disallows all edit tools.\nFor codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped `grep` or `read` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.",
+        description:
+          "Plan mode. Disallows all edit tools.\nFor codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped `grep` or `read` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.",
         options: {},
         permission: PermissionNext.merge(
           defaults,
@@ -136,6 +138,7 @@ export namespace Agent {
           PermissionNext.fromConfig({
             "*": "deny",
             grep: "allow",
+            ripgrep: "allow",
             glob: "allow",
             list: "allow",
             bash: "allow",

@@ -1,0 +1,4 @@
+- Fast content search tool executing `rg` (ripgrep) as a subprocess.
+- Use this tool when you need to identify/count the number of matches within files, or use advanced ripgrep features.
+- Path access is strictly scoped to the current project workspace.
+- Supports full ripgrep arguments.

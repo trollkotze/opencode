@@ -356,6 +356,46 @@ export namespace SessionProcessor {
               error: e,
               stack: JSON.stringify(e.stack),
             })
+            const invalidToolError =
+              e.name === "InvalidToolCallError" ? e : e.cause?.name === "InvalidToolCallError" ? e.cause : undefined
+            if (invalidToolError) {
+              for (const [callID, part] of Object.entries(toolcalls)) {
+                await Session.removePart({
+                  sessionID: part.sessionID,
+                  messageID: part.messageID,
+                  partID: part.id,
+                })
+                delete toolcalls[callID]
+              }
+
+              const isUnavailable =
+                invalidToolError.errorMessage.includes("unavailable") ||
+                invalidToolError.errorMessage.includes("not found")
+
+              let text = ""
+              if (isUnavailable) {
+                const available = Object.entries(streamInput.tools)
+                  .filter(([k]) => k !== "invalid")
+                  .map(([k, t]) => `- ${k}: ${t.description}`)
+                  .join("\n")
+                text = `Let me recall what tools I have available to help me with this here:\n<tool-definitions>\n${available}\n</tool-definitions>`
+              } else {
+                const desc = streamInput.tools[invalidToolError.toolName]?.description || "Tool not found"
+                text = `Let me check quickly how I could use the ${invalidToolError.toolName} tool to help me with this, according to the list of available tools given to me:\n<tool-definition>\n${desc}\n</tool-definition>`
+              }
+
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: input.assistantMessage.id,
+                sessionID: input.sessionID,
+                type: "text",
+                text,
+                time: { start: Date.now(), end: Date.now() },
+                synthetic: true,
+              })
+
+              continue
+            }
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
             if (MessageV2.ContextOverflowError.isInstance(error)) {
               needsCompaction = true

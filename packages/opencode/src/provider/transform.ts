@@ -803,7 +803,7 @@ export namespace ProviderTransform {
         !input.model.api.id.includes("-chat") &&
         input.model.providerID !== "azure"
       ) {
-        result["textVerbosity"] = "low"
+        result["textVerbosity"] = "medium"
       }
 
       if (input.model.providerID.startsWith("opencode")) {

@@ -7,9 +7,22 @@ import { Ripgrep } from "../file/ripgrep"
 import { Instance } from "../project/instance"
 import { assertExternalDirectory } from "./external-directory"
 
-export const GlobTool = Tool.define("glob", {
-  description: DESCRIPTION,
-  parameters: z.object({
+import { PermissionNext } from "../permission"
+
+export const GlobTool = Tool.define("glob", async (initCtx) => {
+  const isToolAllowed = (toolId: string) => {
+    if (!initCtx?.agent) return true
+    return !PermissionNext.disabled([toolId], initCtx.agent.permission).has(toolId)
+  }
+
+  const suggestions: string[] = []
+  if (isToolAllowed("task")) {
+    suggestions.push(
+      "- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead",
+    )
+  }
+
+  const parameters = z.object({
     pattern: z.string().describe("The glob pattern to match files against"),
     path: z
       .string()
@@ -17,62 +30,67 @@ export const GlobTool = Tool.define("glob", {
       .describe(
         `The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.`,
       ),
-  }),
-  async execute(params, ctx) {
-    await ctx.ask({
-      permission: "glob",
-      patterns: [params.pattern],
-      always: ["*"],
-      metadata: {
-        pattern: params.pattern,
-        path: params.path,
-      },
-    })
+  })
 
-    let search = params.path ?? Instance.directory
-    search = path.isAbsolute(search) ? search : path.resolve(Instance.directory, search)
-    await assertExternalDirectory(ctx, search, { kind: "directory" })
-
-    const limit = 100
-    const files = []
-    let truncated = false
-    for await (const file of Ripgrep.files({
-      cwd: search,
-      glob: [params.pattern],
-      signal: ctx.abort,
-    })) {
-      if (files.length >= limit) {
-        truncated = true
-        break
-      }
-      const full = path.resolve(search, file)
-      const stats = Filesystem.stat(full)?.mtime.getTime() ?? 0
-      files.push({
-        path: full,
-        mtime: stats,
+  return {
+    description: DESCRIPTION.replace("${GLOB_TOOL_SUGGESTIONS}", suggestions.join("\n")),
+    parameters,
+    async execute(params: z.infer<typeof parameters>, ctx) {
+      await ctx.ask({
+        permission: "glob",
+        patterns: [params.pattern],
+        always: ["*"],
+        metadata: {
+          pattern: params.pattern,
+          path: params.path,
+        },
       })
-    }
-    files.sort((a, b) => b.mtime - a.mtime)
 
-    const output = []
-    if (files.length === 0) output.push("No files found")
-    if (files.length > 0) {
-      output.push(...files.map((f) => f.path))
-      if (truncated) {
-        output.push("")
-        output.push(
-          `(Results are truncated: showing first ${limit} results. Consider using a more specific path or pattern.)`,
-        )
+      let search = params.path ?? Instance.directory
+      search = path.isAbsolute(search) ? search : path.resolve(Instance.directory, search)
+      await assertExternalDirectory(ctx, search, { kind: "directory" })
+
+      const limit = 100
+      const files = []
+      let truncated = false
+      for await (const file of Ripgrep.files({
+        cwd: search,
+        glob: [params.pattern],
+        signal: ctx.abort,
+      })) {
+        if (files.length >= limit) {
+          truncated = true
+          break
+        }
+        const full = path.resolve(search, file)
+        const stats = Filesystem.stat(full)?.mtime.getTime() ?? 0
+        files.push({
+          path: full,
+          mtime: stats,
+        })
       }
-    }
+      files.sort((a, b) => b.mtime - a.mtime)
 
-    return {
-      title: path.relative(Instance.worktree, search),
-      metadata: {
-        count: files.length,
-        truncated,
-      },
-      output: output.join("\n"),
-    }
-  },
+      const output = []
+      if (files.length === 0) output.push("No files found")
+      if (files.length > 0) {
+        output.push(...files.map((f) => f.path))
+        if (truncated) {
+          output.push("")
+          output.push(
+            `(Results are truncated: showing first ${limit} results. Consider using a more specific path or pattern.)`,
+          )
+        }
+      }
+
+      return {
+        title: path.relative(Instance.worktree, search),
+        metadata: {
+          count: files.length,
+          truncated,
+        },
+        output: output.join("\n"),
+      }
+    },
+  }
 })

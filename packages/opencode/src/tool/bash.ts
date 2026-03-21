@@ -52,30 +52,55 @@ const parser = lazy(async () => {
 })
 
 // TODO: we may wanna rename this tool so it works better on other shells
-export const BashTool = Tool.define("bash", async () => {
+import { PermissionNext } from "../permission"
+
+export const BashTool = Tool.define("bash", async (initCtx) => {
   const shell = Shell.acceptable()
   log.info("bash tool using shell", { shell })
+
+  const isToolAllowed = (toolId: string) => {
+    if (!initCtx?.agent) return true
+    return !PermissionNext.disabled([toolId], initCtx.agent.permission).has(toolId)
+  }
+
+  const toolReplacements: string[] = []
+  if (isToolAllowed("glob")) toolReplacements.push("    - File search: Use Glob (NOT find or ls)")
+  if (isToolAllowed("grep")) toolReplacements.push("    - Content search: Use Grep (NOT grep or rg)")
+  if (isToolAllowed("read")) toolReplacements.push("    - Read files: Use Read (NOT cat/head/tail)")
+  if (isToolAllowed("edit")) toolReplacements.push("    - Edit files: Use Edit (NOT sed/awk)")
+  if (isToolAllowed("write")) toolReplacements.push("    - Write files: Use Write (NOT echo >/cat <<EOF)")
+  toolReplacements.push("    - Communication: Output text directly (NOT echo/printf)")
+
+  const neverUse = []
+  if (isToolAllowed("todowrite")) neverUse.push("TodoWrite")
+  if (isToolAllowed("task")) neverUse.push("Task")
+
+  const neverUseStr = neverUse.length > 0 ? `- NEVER use the ${neverUse.join(" or ")} tools` : ""
+
+  const parameters = z.object({
+    command: z.string().describe("The command to execute"),
+    timeout: z.number().describe("Optional timeout in milliseconds").optional(),
+    workdir: z
+      .string()
+      .describe(
+        `The working directory to run the command in. Defaults to ${Instance.directory}. Use this instead of 'cd' commands.`,
+      )
+      .optional(),
+    description: z
+      .string()
+      .describe(
+        "Clear, concise description of what this command does in 5-10 words. Examples:\nInput: ls\nOutput: Lists files in current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: mkdir foo\nOutput: Creates directory 'foo'",
+      ),
+  })
 
   return {
     description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
       .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
-      .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
-    parameters: z.object({
-      command: z.string().describe("The command to execute"),
-      timeout: z.number().describe("Optional timeout in milliseconds").optional(),
-      workdir: z
-        .string()
-        .describe(
-          `The working directory to run the command in. Defaults to ${Instance.directory}. Use this instead of 'cd' commands.`,
-        )
-        .optional(),
-      description: z
-        .string()
-        .describe(
-          "Clear, concise description of what this command does in 5-10 words. Examples:\nInput: ls\nOutput: Lists files in current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: mkdir foo\nOutput: Creates directory 'foo'",
-        ),
-    }),
-    async execute(params, ctx) {
+      .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES))
+      .replaceAll("${TOOL_REPLACEMENTS}", toolReplacements.join("\n"))
+      .replaceAll("${NEVER_USE_TOOLS}", neverUseStr),
+    parameters,
+    async execute(params: z.infer<typeof parameters>, ctx) {
       const cwd = params.workdir || Instance.directory
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
