@@ -77,7 +77,7 @@ export namespace Agent {
     const result: Record<string, Info> = {
       build: {
         name: "build",
-        description: "The default agent. Executes tools based on configured permissions.",
+        description: "The default agent. Executes tools based on configured permissions.\nFor codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped `grep` or `read` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.",
         options: {},
         permission: PermissionNext.merge(
           defaults,
@@ -92,7 +92,7 @@ export namespace Agent {
       },
       plan: {
         name: "plan",
-        description: "Plan mode. Disallows all edit tools.",
+        description: "Plan mode. Disallows all edit tools.\nFor codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped `grep` or `read` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.",
         options: {},
         permission: PermissionNext.merge(
           defaults,
@@ -115,7 +115,8 @@ export namespace Agent {
       },
       general: {
         name: "general",
-        description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
+        description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.
+        For codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped \`grep\` or \`read\` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.`,
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
@@ -149,7 +150,8 @@ export namespace Agent {
           }),
           user,
         ),
-        description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
+        description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.
+        For codebase understanding, make use of the mcp tools provided by codebase-memory-mcp for extensive structured graph-based ground knowledge, as well as for more scoped enquiries about relationships and attributes, and only then continue with surgically scoped \`grep\` or \`read\` calls, or (very rarely) specific bash commands as far as really still needed.\nBe economic and purposeful with your usage of tools, but aim for full coverage of what you are currently investigating. Keep your awareness grounded in the recent conversation context and don't repeat the same or closely overlapping tool queries if the structured knowledge you require is already fully provided in context.`,
         prompt: PROMPT_EXPLORE,
         options: {},
         mode: "subagent",

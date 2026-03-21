@@ -44,6 +44,218 @@ export namespace LLM {
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
 
+  export type DebugOptions = {
+    redact?: boolean
+    toolDefs?: Record<string, { description: string; schema: unknown }>
+  }
+
+  export type DebugPayload = {
+    model: {
+      providerID: string
+      id: string
+    }
+    toolChoice?: StreamInput["toolChoice"]
+    temperature?: number
+    topP?: number
+    topK?: number
+    maxOutputTokens?: number
+    system: string[]
+    messages: ModelMessage[]
+    wireMessages: ModelMessage[]
+    tools: {
+      ids: string[]
+      active: string[]
+      toolDefs?: DebugOptions["toolDefs"]
+    }
+    providerOptions: Record<string, any>
+    headers: Record<string, string>
+    note?: string
+  }
+
+  function redact(enabled: boolean, input: unknown): unknown {
+    if (!enabled) return input
+
+    const secret = (key: string) => /authorization|api[_-]?key|token|secret|password|cookie|set-cookie/i.test(key)
+
+    const walk = (val: unknown, key?: string): unknown => {
+      if (key && secret(key)) {
+        if (val === undefined || val === null) return val
+        return "[REDACTED]"
+      }
+      if (Array.isArray(val)) return val.map((v) => walk(v))
+      if (!val || typeof val !== "object") return val
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+        out[k] = walk(v, k)
+      }
+      return out
+    }
+
+    return walk(input)
+  }
+
+  export async function debug(input: StreamInput, opts: DebugOptions = {}): Promise<DebugPayload> {
+    const red = opts.redact ?? true
+    const [language, cfg, provider, auth] = await Promise.all([
+      Provider.getLanguage(input.model),
+      Config.get(),
+      Provider.getProvider(input.model.providerID),
+      Auth.get(input.model.providerID),
+    ])
+    const isCodex = provider.id === "openai" && auth?.type === "oauth"
+
+    const sys: string[] = []
+    sys.push(
+      [
+        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : SystemPrompt.provider(input.model)),
+        ...input.system,
+        ...(input.user.system ? [input.user.system] : []),
+      ]
+        .filter((x) => x)
+        .join("\n"),
+    )
+
+    const header = sys[0]
+    await Plugin.trigger(
+      "experimental.chat.system.transform",
+      { sessionID: input.sessionID, model: input.model },
+      { system: sys },
+    )
+    if (sys.length > 2 && sys[0] === header) {
+      const rest = sys.slice(1)
+      sys.length = 0
+      sys.push(header, rest.join("\n"))
+    }
+
+    const variant =
+      !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
+    const base = input.small
+      ? ProviderTransform.smallOptions(input.model)
+      : ProviderTransform.options({
+          model: input.model,
+          sessionID: input.sessionID,
+          providerOptions: provider.options,
+        })
+    const options: Record<string, any> = pipe(
+      base,
+      mergeDeep(input.model.options),
+      mergeDeep(input.agent.options),
+      mergeDeep(variant),
+    )
+    if (isCodex) {
+      options.instructions = SystemPrompt.instructions()
+    }
+
+    const params = await Plugin.trigger(
+      "chat.params",
+      {
+        sessionID: input.sessionID,
+        agent: input.agent,
+        model: input.model,
+        provider,
+        message: input.user,
+      },
+      {
+        temperature: input.model.capabilities.temperature
+          ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
+          : undefined,
+        topP: input.agent.topP ?? ProviderTransform.topP(input.model),
+        topK: ProviderTransform.topK(input.model),
+        options,
+      },
+    )
+
+    const { headers } = await Plugin.trigger(
+      "chat.headers",
+      {
+        sessionID: input.sessionID,
+        agent: input.agent,
+        model: input.model,
+        provider,
+        message: input.user,
+      },
+      {
+        headers: {},
+      },
+    )
+
+    const maxOutputTokens =
+      isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
+
+    const tools = { ...input.tools }
+    const resolved = await resolveTools({ tools, agent: input.agent, permission: input.permission, user: input.user })
+
+    const isLiteLLMProxy =
+      provider.options?.["litellmProxy"] === true ||
+      input.model.providerID.toLowerCase().includes("litellm") ||
+      input.model.api.id.toLowerCase().includes("litellm")
+
+    if (isLiteLLMProxy && Object.keys(resolved).length === 0 && hasToolCalls(input.messages)) {
+      resolved["_noop"] = tool({
+        description:
+          "Placeholder for LiteLLM/Anthropic proxy compatibility - required when message history contains tool calls but no active tools are needed",
+        inputSchema: jsonSchema({ type: "object", properties: {} }),
+        execute: async () => ({ output: "", title: "", metadata: {} }),
+      })
+    }
+
+    const msg = [
+      ...sys.map(
+        (x): ModelMessage => ({
+          role: "system",
+          content: x,
+        }),
+      ),
+      ...input.messages,
+    ]
+
+    const wire = ProviderTransform.message(msg, input.model, options)
+
+    const out: DebugPayload = {
+      model: {
+        providerID: input.model.providerID,
+        id: input.model.id,
+      },
+      toolChoice: input.toolChoice,
+      temperature: params.temperature,
+      topP: params.topP,
+      topK: params.topK,
+      maxOutputTokens,
+      system: sys,
+      messages: msg,
+      wireMessages: wire,
+      tools: {
+        ids: Object.keys(resolved),
+        active: Object.keys(resolved).filter((x) => x !== "invalid"),
+        toolDefs: opts.toolDefs,
+      },
+      providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+      headers: {
+        ...(input.model.providerID.startsWith("opencode")
+          ? {
+              "x-opencode-project": Instance.project.id,
+              "x-opencode-session": input.sessionID,
+              "x-opencode-request": input.user.id,
+              "x-opencode-client": Flag.OPENCODE_CLIENT,
+            }
+          : input.model.providerID !== "anthropic"
+            ? {
+                "User-Agent": `opencode/${Installation.VERSION}`,
+              }
+            : undefined),
+        ...input.model.headers,
+        ...headers,
+      } as Record<string, string>,
+      note: red ? "Secrets are redacted (headers/options)" : undefined,
+    }
+
+    return {
+      ...out,
+      headers: redact(red, out.headers) as Record<string, string>,
+      providerOptions: redact(red, out.providerOptions) as Record<string, any>,
+    }
+  }
+
   export async function stream(input: StreamInput) {
     const l = log
       .clone()

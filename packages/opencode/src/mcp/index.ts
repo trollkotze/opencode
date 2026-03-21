@@ -642,7 +642,21 @@ export namespace MCP {
       for (const mcpTool of toolsResult.tools) {
         const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
         const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-        result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
+        const inputSchema = mcpTool.inputSchema
+        const schema: JSONSchema7 = {
+          ...(inputSchema as JSONSchema7),
+          type: "object",
+          properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+          additionalProperties: false,
+        }
+
+        const t = await convertMcpTool(mcpTool, client, timeout)
+        ;(t as any).__opencode = {
+          schema,
+          client: clientName,
+          name: mcpTool.name,
+        }
+        result[sanitizedClientName + "_" + sanitizedToolName] = t
       }
     }
     return result
