@@ -224,6 +224,7 @@ export function DialogMessage(props: {
             })
             const initialPrompt = (() => {
               const msg = message()
+              if (msg?.role !== "user") return undefined
               if (!msg) return undefined
               const parts = sync.data.part[msg.id]
               return parts.reduce(

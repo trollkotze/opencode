@@ -22,7 +22,6 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     const messages = sync.data.message[props.sessionID] ?? []
     const result = [] as DialogSelectOption<string>[]
     for (const message of messages) {
-      if (message.role !== "user") continue
       const part = (sync.data.part[message.id] ?? []).find(
         (x) => x.type === "text" && !x.synthetic && !x.ignored,
       ) as TextPart
@@ -30,27 +29,29 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
       result.push({
         title: part.text.replace(/\n/g, " "),
         value: message.id,
+        description: message.role,
         footer: Locale.time(message.time.created),
         onSelect: async (dialog) => {
           const forked = await sdk.client.session.fork({
             sessionID: props.sessionID,
             messageID: message.id,
           })
-          const parts = sync.data.part[message.id] ?? []
-          const initialPrompt = parts.reduce(
-            (agg, part) => {
-              if (part.type === "text") {
-                if (!part.synthetic) agg.input += part.text
-              }
-              if (part.type === "file") agg.parts.push(part)
-              return agg
-            },
-            { input: "", parts: [] as PromptInfo["parts"] },
-          )
           route.navigate({
             sessionID: forked.data!.id,
             type: "session",
-            initialPrompt,
+            initialPrompt:
+              message.role === "user"
+                ? (sync.data.part[message.id] ?? []).reduce(
+                    (agg, part) => {
+                      if (part.type === "text") {
+                        if (!part.synthetic) agg.input += part.text
+                      }
+                      if (part.type === "file") agg.parts.push(part)
+                      return agg
+                    },
+                    { input: "", parts: [] as PromptInfo["parts"] },
+                  )
+                : undefined,
           })
           dialog.clear()
         },

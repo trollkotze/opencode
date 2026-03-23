@@ -252,10 +252,15 @@ export namespace Session {
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
+      const target = input.messageID ? msgs.find((msg) => msg.info.id === input.messageID) : undefined
       const idMap = new Map<string, MessageID>()
 
       for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
+        if (input.messageID) {
+          if (!target) throw new Error("message not found")
+          if (target.info.role === "user" && msg.info.id >= input.messageID) break
+          if (target.info.role === "assistant" && msg.info.id > input.messageID) break
+        }
         const newID = MessageID.ascending()
         idMap.set(msg.info.id, newID)
 
