@@ -9,6 +9,7 @@ import { TextareaRenderable, TextAttributes } from "@opentui/core"
 import { Editor } from "../../util/editor"
 import { useTheme } from "../../context/theme"
 import type { Part, TextPart, ToolPart, ReasoningPart } from "@opencode-ai/sdk/v2"
+import { useRoute } from "@tui/context/route"
 
 export function DialogPart(props: {
   sessionID: string
@@ -20,6 +21,7 @@ export function DialogPart(props: {
   const sdk = useSDK()
   const dialog = useDialog()
   const renderer = useRenderer()
+  const route = useRoute()
 
   const part = createMemo(() => {
     const parts = sync.data.part[props.messageID] ?? []
@@ -40,6 +42,31 @@ export function DialogPart(props: {
       messageID: props.messageID,
       partID: props.partID,
     })
+  }
+
+  async function fork() {
+    const forked = await sdk.client.session.fork({
+      sessionID: props.sessionID,
+      messageID: props.messageID,
+    })
+    route.navigate({
+      sessionID: forked.data!.id,
+      type: "session",
+    })
+    dialog.clear()
+  }
+
+  function withFork(actions: DialogSelectOption<string>[]) {
+    if (props.role !== "assistant") return actions
+    return [
+      ...actions,
+      {
+        title: "Fork",
+        value: "fork",
+        description: "create a new session",
+        onSelect: fork,
+      },
+    ]
   }
 
   function textActions(p: TextPart): DialogSelectOption<string>[] {
@@ -131,7 +158,7 @@ export function DialogPart(props: {
       },
     })
 
-    return actions
+    return withFork(actions)
   }
 
   function toolActions(p: ToolPart): DialogSelectOption<string>[] {
@@ -173,7 +200,7 @@ export function DialogPart(props: {
       },
     })
 
-    return actions
+    return withFork(actions)
   }
 
   function reasoningActions(p: ReasoningPart): DialogSelectOption<string>[] {
@@ -211,7 +238,7 @@ export function DialogPart(props: {
       },
     })
 
-    return actions
+    return withFork(actions)
   }
 
   const options = createMemo(() => {

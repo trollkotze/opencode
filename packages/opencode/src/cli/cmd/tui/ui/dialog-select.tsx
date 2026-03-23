@@ -13,6 +13,7 @@ import { Locale } from "@/util/locale"
 
 export interface DialogSelectProps<T> {
   title: string
+  legend?: JSX.Element
   placeholder?: string
   options: DialogSelectOption<T>[]
   flat?: boolean
@@ -240,6 +241,9 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
             esc
           </text>
         </box>
+        <Show when={props.legend}>
+          <box paddingTop={1}>{props.legend}</box>
+        </Show>
         <box paddingTop={1}>
           <input
             onInput={(e) => {

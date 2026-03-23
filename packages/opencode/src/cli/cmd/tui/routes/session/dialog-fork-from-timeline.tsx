@@ -7,12 +7,14 @@ import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { useDialog } from "../../ui/dialog"
 import type { PromptInfo } from "@tui/component/prompt/history"
+import { useTheme } from "@tui/context/theme"
 
 export function DialogForkFromTimeline(props: { sessionID: string; onMove: (messageID: string) => void }) {
   const sync = useSync()
   const dialog = useDialog()
   const sdk = useSDK()
   const route = useRoute()
+  const { theme } = useTheme()
 
   onMount(() => {
     dialog.setSize("large")
@@ -29,8 +31,9 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
       result.push({
         title: part.text.replace(/\n/g, " "),
         value: message.id,
-        description: message.role,
+        description: Locale.titlecase(message.role),
         footer: Locale.time(message.time.created),
+        gutter: <text fg={message.role === "user" ? theme.primary : theme.accent}>●</text>,
         onSelect: async (dialog) => {
           const forked = await sdk.client.session.fork({
             sessionID: props.sessionID,
@@ -61,5 +64,18 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     return result
   })
 
-  return <DialogSelect onMove={(option) => props.onMove(option.value)} title="Fork from message" options={options()} />
+  return (
+    <DialogSelect
+      onMove={(option) => props.onMove(option.value)}
+      title="Fork from message"
+      legend={
+        <text fg={theme.textMuted}>
+          <span style={{ fg: theme.primary }}>●</span> User
+          <span> </span>
+          <span style={{ fg: theme.accent }}>●</span> Assistant
+        </text>
+      }
+      options={options()}
+    />
+  )
 }
