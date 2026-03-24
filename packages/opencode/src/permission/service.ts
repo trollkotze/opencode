@@ -64,6 +64,10 @@ export namespace PermissionEffect {
     patterns: z.string().array(),
   })
 
+  export interface AskResult {
+    amendment?: string
+  }
+
   export const Event = {
     Asked: BusEvent.define("permission.asked", Request),
     Replied: BusEvent.define(
@@ -72,6 +76,7 @@ export namespace PermissionEffect {
         sessionID: SessionID.zod,
         requestID: PermissionID.zod,
         reply: Reply,
+        amendment: z.string().optional(),
       }),
     ),
   }
@@ -100,24 +105,25 @@ export namespace PermissionEffect {
 
   export type Error = DeniedError | RejectedError | CorrectedError
 
-  export const AskInput = Request.partial({ id: true }).extend({
+  export const AskInput = Request.omit({ amendable: true }).partial({ id: true }).extend({
     ruleset: Ruleset,
   })
 
-  export const ReplyInput = z.object({
-    requestID: PermissionID.zod,
-    reply: Reply,
-    message: z.string().optional(),
-  })
-  .superRefine((input, ctx) => {
-    if (input.reply !== "amend") return
-    if (input.message?.trim()) return
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["message"],
-      message: "message is required when reply is amend",
+  export const ReplyInput = z
+    .object({
+      requestID: PermissionID.zod,
+      reply: Reply,
+      message: z.string().optional(),
     })
-  })
+    .superRefine((input, ctx) => {
+      if (input.reply !== "amend") return
+      if (input.message?.trim()) return
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["message"],
+        message: "message is required when reply is amend",
+      })
+    })
 
   export interface Api {
     readonly ask: (input: z.infer<typeof AskInput>) => Effect.Effect<void | AskResult, Error>
@@ -199,7 +205,7 @@ export namespace PermissionEffect {
           sessionID: existing.info.sessionID,
           requestID: existing.info.id,
           reply: input.reply,
-          amendment: input.reply === "amend" ? input.message?.trim() : undefined
+          amendment: input.reply === "amend" ? input.message?.trim() : undefined,
         })
 
         if (input.reply === "reject") {

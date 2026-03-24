@@ -215,7 +215,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             }
             sdk.client.permission.reply({
               reply: "amend",
-              path_requestID: props.request.id,
+              requestID: props.request.id,
               message: next,
             })
           }}
@@ -453,12 +453,21 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               title="Permission required"
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject", ...(props.request.amendable ? { } : {}) }}
+              options={{
+                once: "Allow once",
+                always: "Allow always",
+                ...(props.request.amendable ? { amend: "Amend" } : {}),
+                reject: "Reject",
+              }}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {
                 if (option === "always") {
                   setStore("stage", "always")
+                  return
+                }
+                if (option === "amend") {
+                  setStore("stage", "amend")
                   return
                 }
                 if (option === "reject") {

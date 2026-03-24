@@ -1175,12 +1175,25 @@ export const SessionRoutes = lazy(() =>
           permissionID: PermissionID.zod,
         }),
       ),
-      validator("json", z.object({ response: PermissionNext.Reply, message: z.string().optional() })),
+      validator(
+        "json",
+        z.object({ response: PermissionNext.Reply, message: z.string().optional() }).superRefine((input, ctx) => {
+          if (input.response !== "amend") return
+          if (input.message?.trim()) return
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["message"],
+            message: "message is required when response is amend",
+          })
+        }),
+      ),
       async (c) => {
         const params = c.req.valid("param")
-        PermissionNext.reply({
+        const json = c.req.valid("json")
+        await PermissionNext.reply({
           requestID: params.permissionID,
-          reply: c.req.valid("json").response,
+          reply: json.response,
+          message: json.message,
         })
         return c.json(true)
       },

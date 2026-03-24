@@ -96,6 +96,7 @@ export type EventPermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject" | "amend"
+    amendment?: string
   }
 }
 
@@ -3927,7 +3928,6 @@ export type PermissionRespondResponse = PermissionRespondResponses[keyof Permiss
 
 export type PermissionReplyData = {
   body?: {
-    requestID: string
     reply: "once" | "always" | "reject" | "amend"
     message?: string
   }
