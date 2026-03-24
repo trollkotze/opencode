@@ -20,8 +20,19 @@ import { Global } from "@/global"
 import path from "path"
 import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
+import { BusEvent } from "@/bus/bus-event"
+import { Bus } from "@/bus"
 
 export namespace Agent {
+  export const Event = {
+    Updated: BusEvent.define(
+      "agent.updated",
+      z.object({
+        name: z.string(),
+      }),
+    ),
+  }
+
   export const Info = z
     .object({
       name: z.string(),
@@ -103,6 +114,9 @@ export namespace Agent {
             plan_exit: "allow",
             external_directory: {
               [path.join(Global.Path.data, "plans", "*")]: "allow",
+            },
+            task: {
+              build: "allow",
             },
             edit: {
               "*": "deny",
@@ -253,25 +267,42 @@ export namespace Agent {
       )
     }
 
-    return result
+    return {
+      base: result,
+      registered: {} as Record<string, Info>,
+    }
   })
 
+  async function all() {
+    const data = await state()
+    return {
+      ...data.base,
+      ...data.registered,
+    }
+  }
+
   export async function get(agent: string) {
-    return state().then((x) => x[agent])
+    return all().then((x) => x[agent])
   }
 
   export async function list() {
     const cfg = await Config.get()
     return pipe(
-      await state(),
+      await all(),
       values(),
       sortBy([(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"]),
     )
   }
 
+  export async function register(input: Info) {
+    const data = await state()
+    data.registered[input.name] = input
+    await Bus.publish(Event.Updated, { name: input.name })
+  }
+
   export async function defaultAgent() {
     const cfg = await Config.get()
-    const agents = await state()
+    const agents = await all()
 
     if (cfg.default_agent) {
       const agent = agents[cfg.default_agent]

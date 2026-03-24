@@ -34,6 +34,7 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { DialogGenerateAgent } from "../dialog-generate-agent"
 
 export type PromptProps = {
   sessionID?: string
@@ -368,6 +369,17 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
+        title: "Generate agent",
+        value: "agent.generate",
+        category: "Agent",
+        slash: {
+          name: "generate-agent",
+        },
+        onSelect: () => {
+          dialog.replace(() => <DialogGenerateAgent sessionID={props.sessionID} />)
+        },
+      },
+      {
         title: "Skills",
         value: "prompt.skills",
         category: "Prompt",
@@ -568,6 +580,22 @@ export function Prompt(props: PromptProps) {
     if (autocomplete?.visible) return
     if (!store.prompt.input) return
     const trimmed = store.prompt.input.trim()
+    if (trimmed === "/generate-agent" || trimmed.startsWith("/generate-agent ")) {
+      const firstLineEnd = store.prompt.input.indexOf("\n")
+      const firstLine = firstLineEnd === -1 ? store.prompt.input : store.prompt.input.slice(0, firstLineEnd)
+      const args = firstLine.replace(/^\/generate-agent\s*/, "")
+      const rest = firstLineEnd === -1 ? "" : store.prompt.input.slice(firstLineEnd + 1)
+      const description = [args, rest].filter(Boolean).join("\n").trim()
+      dialog.replace(() => <DialogGenerateAgent sessionID={props.sessionID} initialDescription={description} />)
+      input.extmarks.clear()
+      setStore("prompt", {
+        input: "",
+        parts: [],
+      })
+      setStore("extmarkToPartIndex", new Map())
+      input.clear()
+      return
+    }
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       exit()
       return

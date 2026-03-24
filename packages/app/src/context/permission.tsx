@@ -17,7 +17,8 @@ import {
 type PermissionRespondFn = (input: {
   sessionID: string
   permissionID: string
-  response: "once" | "always" | "reject"
+  response: "once" | "always" | "reject" | "amend"
+  message?: string
   directory?: string
 }) => void
 

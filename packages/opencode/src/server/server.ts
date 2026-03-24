@@ -18,6 +18,7 @@ import { Vcs, VcsService } from "../project/vcs"
 import { runPromiseInstance } from "@/effect/runtime"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill/skill"
+import { AgentCreate } from "@/agent/create"
 import { Auth } from "../auth"
 import { Flag } from "../flag/flag"
 import { Command } from "../command"
@@ -431,6 +432,30 @@ export namespace Server {
         async (c) => {
           const modes = await Agent.list()
           return c.json(modes)
+        },
+      )
+      .post(
+        "/agent/create",
+        describeRoute({
+          summary: "Create agent",
+          description: "Generate a new agent, write it to disk, and optionally load it into the current instance.",
+          operationId: "agent.create",
+          responses: {
+            200: {
+              description: "Created agent",
+              content: {
+                "application/json": {
+                  schema: resolver(AgentCreate.Result),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator("json", AgentCreate.Input),
+        async (c) => {
+          const result = await AgentCreate.create(c.req.valid("json"))
+          return c.json(result)
         },
       )
       .get(

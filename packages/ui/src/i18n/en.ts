@@ -131,6 +131,8 @@ export const dict: Record<string, string> = {
   "ui.common.submit": "Submit",
 
   "ui.permission.deny": "Deny",
+  "ui.permission.amend": "Amend",
+  "ui.permission.amendPrompt": "Enter the replacement value for this tool call",
   "ui.permission.allowAlways": "Allow always",
   "ui.permission.allowOnce": "Allow once",
 

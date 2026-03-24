@@ -8,7 +8,7 @@ import { useLanguage } from "@/context/language"
 export function SessionPermissionDock(props: {
   request: PermissionRequest
   responding: boolean
-  onDecide: (response: "once" | "always" | "reject") => void
+  onDecide: (input: { response: "once" | "always" | "reject" | "amend"; message?: string }) => void
 }) {
   const language = useLanguage()
 
@@ -34,18 +34,43 @@ export function SessionPermissionDock(props: {
         <>
           <div />
           <div data-slot="permission-footer-actions">
-            <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
+            <Button
+              variant="ghost"
+              size="normal"
+              onClick={() => props.onDecide({ response: "reject" })}
+              disabled={props.responding}
+            >
               {language.t("ui.permission.deny")}
             </Button>
+            <Show when={props.request.amendable}>
+              <Button
+                variant="ghost"
+                size="normal"
+                onClick={() => {
+                  const current = props.request.patterns[0] ?? ""
+                  const next = window.prompt(language.t("ui.permission.amendPrompt"), current)?.trim()
+                  if (!next) return
+                  props.onDecide({ response: "amend", message: next })
+                }}
+                disabled={props.responding}
+              >
+                {language.t("ui.permission.amend")}
+              </Button>
+            </Show>
             <Button
               variant="secondary"
               size="normal"
-              onClick={() => props.onDecide("always")}
+              onClick={() => props.onDecide({ response: "always" })}
               disabled={props.responding}
             >
               {language.t("ui.permission.allowAlways")}
             </Button>
-            <Button variant="primary" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
+            <Button
+              variant="primary"
+              size="normal"
+              onClick={() => props.onDecide({ response: "once" })}
+              disabled={props.responding}
+            >
               {language.t("ui.permission.allowOnce")}
             </Button>
           </div>

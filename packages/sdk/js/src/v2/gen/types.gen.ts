@@ -681,6 +681,13 @@ export type EventMessagePartRemoved = {
   }
 }
 
+export type EventAgentUpdated = {
+  type: "agent.updated"
+  properties: {
+    name: string
+  }
+}
+
 export type SessionStatus =
   | {
       type: "idle"
@@ -998,6 +1005,7 @@ export type Event =
   | EventMessagePartUpdated
   | EventMessagePartDelta
   | EventMessagePartRemoved
+  | EventAgentUpdated
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
@@ -1078,12 +1086,12 @@ export type PermissionConfig =
       bash?: PermissionRuleConfig
       task?: PermissionRuleConfig
       external_directory?: PermissionRuleConfig
-      todowrite?: PermissionActionConfig
-      todoread?: PermissionActionConfig
-      question?: PermissionActionConfig
-      webfetch?: PermissionActionConfig
-      websearch?: PermissionActionConfig
-      codesearch?: PermissionActionConfig
+      todowrite?: PermissionRuleConfig
+      todoread?: PermissionRuleConfig
+      question?: PermissionRuleConfig
+      webfetch?: PermissionRuleConfig
+      websearch?: PermissionRuleConfig
+      codesearch?: PermissionRuleConfig
       lsp?: PermissionRuleConfig
       doom_loop?: PermissionActionConfig
       skill?: PermissionRuleConfig
@@ -5076,6 +5084,57 @@ export type AppAgentsResponses = {
 }
 
 export type AppAgentsResponse = AppAgentsResponses[keyof AppAgentsResponses]
+
+export type AgentCreateData = {
+  body?: {
+    description?: string
+    agent?: string
+    sessionID?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
+    mode?: "subagent" | "primary" | "all"
+    permission?: PermissionConfig
+    path?: string
+    load?: boolean
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/agent/create"
+}
+
+export type AgentCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AgentCreateError = AgentCreateErrors[keyof AgentCreateErrors]
+
+export type AgentCreateResponses = {
+  /**
+   * Created agent
+   */
+  200: {
+    info: Agent
+    path: string
+    generated: {
+      identifier: string
+      whenToUse: string
+      systemPrompt: string
+    }
+    description: string
+    discoverable: boolean
+    loaded: boolean
+  }
+}
+
+export type AgentCreateResponse = AgentCreateResponses[keyof AgentCreateResponses]
 
 export type AppSkillsData = {
   body?: never

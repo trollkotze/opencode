@@ -3,6 +3,8 @@
 import { client } from "./client.gen.js"
 import { buildClientParams, type Client, type Options as Options2, type TDataShape } from "./client/index.js"
 import type {
+  AgentCreateErrors,
+  AgentCreateResponses,
   AgentPartInput,
   AppAgentsResponses,
   AppLogErrors,
@@ -70,6 +72,7 @@ import type {
   PartUpdateErrors,
   PartUpdateResponses,
   PathGetResponses,
+  PermissionConfig,
   PermissionListResponses,
   PermissionReplyErrors,
   PermissionReplyResponses,
@@ -3971,6 +3974,62 @@ export class App extends HeyApiClient {
   }
 }
 
+export class Agent extends HeyApiClient {
+  /**
+   * Create agent
+   *
+   * Generate a new agent, write it to disk, and optionally load it into the current instance.
+   */
+  public create<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      description?: string
+      agent?: string
+      sessionID?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
+      mode?: "subagent" | "primary" | "all"
+      permission?: PermissionConfig
+      path?: string
+      load?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "description" },
+            { in: "body", key: "agent" },
+            { in: "body", key: "sessionID" },
+            { in: "body", key: "model" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "permission" },
+            { in: "body", key: "path" },
+            { in: "body", key: "load" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<AgentCreateResponses, AgentCreateErrors, ThrowOnError>({
+      url: "/agent/create",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Lsp extends HeyApiClient {
   /**
    * Get LSP status
@@ -4183,6 +4242,11 @@ export class OpencodeClient extends HeyApiClient {
   private _app?: App
   get app(): App {
     return (this._app ??= new App({ client: this.client }))
+  }
+
+  private _agent?: Agent
+  get agent(): Agent {
+    return (this._agent ??= new Agent({ client: this.client }))
   }
 
   private _lsp?: Lsp

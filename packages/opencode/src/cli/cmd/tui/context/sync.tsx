@@ -349,6 +349,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           setStore("vcs", { branch: event.properties.branch })
           break
         }
+
+        case "agent.updated": {
+          sdk.client.app.agents().then((x) => {
+            if (!x.data) return
+            setStore("agent", reconcile(x.data))
+          })
+          break
+        }
       }
     })
 

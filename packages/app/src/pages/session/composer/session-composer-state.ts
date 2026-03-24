@@ -126,14 +126,14 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
     return store.responding === perm.id
   })
 
-  const decide = (response: "once" | "always" | "reject") => {
+  const decide = (input: { response: "once" | "always" | "reject" | "amend"; message?: string }) => {
     const perm = permissionRequest()
     if (!perm) return
     if (store.responding === perm.id) return
 
     setStore("responding", perm.id)
     sdk.client.permission
-      .respond({ sessionID: perm.sessionID, permissionID: perm.id, response })
+      .respond({ sessionID: perm.sessionID, permissionID: perm.id, response: input.response, message: input.message })
       .catch((err: unknown) => {
         const description = err instanceof Error ? err.message : String(err)
         showToast({ title: language.t("common.requestFailed"), description })
