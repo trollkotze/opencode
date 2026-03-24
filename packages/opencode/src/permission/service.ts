@@ -43,6 +43,7 @@ export namespace PermissionEffect {
       patterns: z.string().array(),
       metadata: z.record(z.string(), z.any()),
       always: z.string().array(),
+      amendable: z.boolean().optional(),
       tool: z
         .object({
           messageID: MessageID.zod,
@@ -55,7 +56,7 @@ export namespace PermissionEffect {
     })
   export type Request = z.infer<typeof Request>
 
-  export const Reply = z.enum(["once", "always", "reject"])
+  export const Reply = z.enum(["once", "always", "reject", "amend"])
   export type Reply = z.infer<typeof Reply>
 
   export const Approval = z.object({
@@ -108,16 +109,25 @@ export namespace PermissionEffect {
     reply: Reply,
     message: z.string().optional(),
   })
+  .superRefine((input, ctx) => {
+    if (input.reply !== "amend") return
+    if (input.message?.trim()) return
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["message"],
+      message: "message is required when reply is amend",
+    })
+  })
 
   export interface Api {
-    readonly ask: (input: z.infer<typeof AskInput>) => Effect.Effect<void, Error>
+    readonly ask: (input: z.infer<typeof AskInput>) => Effect.Effect<void | AskResult, Error>
     readonly reply: (input: z.infer<typeof ReplyInput>) => Effect.Effect<void>
     readonly list: () => Effect.Effect<Request[]>
   }
 
   interface PendingEntry {
     info: Request
-    deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
+    deferred: Deferred.Deferred<void | AskResult, RejectedError | CorrectedError>
   }
 
   export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
@@ -144,6 +154,7 @@ export namespace PermissionEffect {
       const ask = Effect.fn("PermissionService.ask")(function* (input: z.infer<typeof AskInput>) {
         const { ruleset, ...request } = input
         let needsAsk = false
+        let amendable = false
 
         for (const pattern of request.patterns) {
           const rule = evaluate(request.permission, pattern, ruleset, approved)
@@ -155,6 +166,7 @@ export namespace PermissionEffect {
           }
           if (rule.action === "allow") continue
           needsAsk = true
+          if (rule.pattern === "*") amendable = true
         }
 
         if (!needsAsk) return
@@ -162,11 +174,12 @@ export namespace PermissionEffect {
         const id = request.id ?? PermissionID.ascending()
         const info: Request = {
           id,
+          amendable,
           ...request,
         }
         log.info("asking", { id, permission: info.permission, patterns: info.patterns })
 
-        const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
+        const deferred = yield* Deferred.make<void | AskResult, RejectedError | CorrectedError>()
         pending.set(id, { info, deferred })
         void Bus.publish(Event.Asked, info)
         return yield* Effect.ensuring(
@@ -186,6 +199,7 @@ export namespace PermissionEffect {
           sessionID: existing.info.sessionID,
           requestID: existing.info.id,
           reply: input.reply,
+          amendment: input.reply === "amend" ? input.message?.trim() : undefined
         })
 
         if (input.reply === "reject") {
@@ -204,6 +218,11 @@ export namespace PermissionEffect {
             })
             yield* Deferred.fail(item.deferred, new RejectedError())
           }
+          return
+        }
+
+        if (input.reply === "amend") {
+          yield* Deferred.succeed(existing.deferred, { amendment: input.message?.trim() })
           return
         }
 

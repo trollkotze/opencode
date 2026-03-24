@@ -78,6 +78,7 @@ export type PermissionRequest = {
     [key: string]: unknown
   }
   always: Array<string>
+  amendable?: boolean
   tool?: {
     messageID: string
     callID: string
@@ -94,7 +95,7 @@ export type EventPermissionReplied = {
   properties: {
     sessionID: string
     requestID: string
-    reply: "once" | "always" | "reject"
+    reply: "once" | "always" | "reject" | "amend"
   }
 }
 
@@ -3888,7 +3889,8 @@ export type SessionCheckConflictsResponse = SessionCheckConflictsResponses[keyof
 
 export type PermissionRespondData = {
   body?: {
-    response: "once" | "always" | "reject"
+    response: "once" | "always" | "reject" | "amend"
+    message?: string
   }
   path: {
     sessionID: string
@@ -3925,7 +3927,8 @@ export type PermissionRespondResponse = PermissionRespondResponses[keyof Permiss
 
 export type PermissionReplyData = {
   body?: {
-    reply: "once" | "always" | "reject"
+    requestID: string
+    reply: "once" | "always" | "reject" | "amend"
     message?: string
   }
   path: {

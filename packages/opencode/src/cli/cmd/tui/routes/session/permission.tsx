@@ -17,7 +17,7 @@ import { Global } from "@/global"
 import { useDialog } from "../../ui/dialog"
 import { useTuiConfig } from "../../context/tui-config"
 
-type PermissionStage = "permission" | "always" | "reject"
+type PermissionStage = "permission" | "always" | "reject" | "amend"
 
 function normalizePath(input?: string) {
   if (!input) return ""
@@ -195,6 +195,28 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               reply: "reject",
               requestID: props.request.id,
               message: message || undefined,
+            })
+          }}
+          onCancel={() => {
+            setStore("stage", "permission")
+          }}
+        />
+      </Match>
+      <Match when={store.stage === "amend"}>
+        <TextPrompt
+          title="Amend permission"
+          description="Enter the replacement value to use for this tool call"
+          initialValue={props.request.patterns[0] ?? ""}
+          onConfirm={(message) => {
+            const next = message.trim()
+            if (!next) {
+              setStore("stage", "permission")
+              return
+            }
+            sdk.client.permission.reply({
+              reply: "amend",
+              path_requestID: props.request.id,
+              message: next,
             })
           }}
           onCancel={() => {
@@ -431,7 +453,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               title="Permission required"
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
+              options={{ once: "Allow once", always: "Allow always", reject: "Reject", ...(props.request.amendable ? { } : {}) }}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {
@@ -462,6 +484,85 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
         })()}
       </Match>
     </Switch>
+  )
+}
+
+function TextPrompt(props: {
+  title: string
+  description: string
+  initialValue?: string
+  onConfirm: (message: string) => void
+  onCancel: () => void
+}) {
+  let input: TextareaRenderable
+  const { theme } = useTheme()
+  const keybind = useKeybind()
+  const textareaKeybindings = useTextareaKeybindings()
+  const dimensions = useTerminalDimensions()
+  const narrow = createMemo(() => dimensions().width < 80)
+  const dialog = useDialog()
+
+  useKeyboard((evt) => {
+    if (dialog.stack.length > 0) return
+
+    if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      evt.preventDefault()
+      props.onCancel()
+      return
+    }
+    if (evt.name === "return") {
+      evt.preventDefault()
+      props.onConfirm(input.plainText)
+    }
+  })
+
+  return (
+    <box
+      backgroundColor={theme.backgroundPanel}
+      border={["left"]}
+      borderColor={theme.error}
+      customBorderChars={SplitBorder.customBorderChars}
+    >
+      <box gap={1} paddingLeft={1} paddingRight={3} paddingTop={1} paddingBottom={1}>
+        <box flexDirection="row" gap={1} paddingLeft={1}>
+          <text fg={theme.error}>{"△"}</text>
+          <text fg={theme.text}>{props.title}</text>
+        </box>
+        <box paddingLeft={1}>
+          <text fg={theme.textMuted}>{props.description}</text>
+        </box>
+      </box>
+      <box
+        flexDirection={narrow() ? "column" : "row"}
+        flexShrink={0}
+        paddingTop={1}
+        paddingLeft={2}
+        paddingRight={3}
+        paddingBottom={1}
+        backgroundColor={theme.backgroundElement}
+        justifyContent={narrow() ? "flex-start" : "space-between"}
+        alignItems={narrow() ? "flex-start" : "center"}
+        gap={1}
+      >
+        <textarea
+          ref={(val: TextareaRenderable) => (input = val)}
+          focused
+          initialValue={props.initialValue}
+          textColor={theme.text}
+          focusedTextColor={theme.text}
+          cursorColor={theme.primary}
+          keyBindings={textareaKeybindings()}
+        />
+        <box flexDirection="row" gap={2} flexShrink={0}>
+          <text fg={theme.text}>
+            enter <span style={{ fg: theme.textMuted }}>confirm</span>
+          </text>
+          <text fg={theme.text}>
+            esc <span style={{ fg: theme.textMuted }}>cancel</span>
+          </text>
+        </box>
+      </box>
+    </box>
   )
 }
 

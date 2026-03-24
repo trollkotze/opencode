@@ -568,7 +568,7 @@ export namespace SessionPrompt {
             } satisfies MessageV2.ToolPart)) as MessageV2.ToolPart
           },
           async ask(req) {
-            await PermissionNext.ask({
+            return await PermissionNext.ask({
               ...req,
               sessionID: sessionID,
               ruleset: PermissionNext.merge(taskAgent.permission, session.permission ?? []),

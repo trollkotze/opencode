@@ -67,22 +67,27 @@ export const TaskTool = Tool.define("task", async (ctx) => {
     parameters,
     async execute(params: z.infer<typeof parameters>, ctx) {
       const config = await Config.get()
+      const approval = ctx.extra?.bypassAgentCheck
+        ? undefined
+        : await ctx.ask({
+            permission: "task",
+            patterns: [params.subagent_type],
+            always: ["*"],
+            metadata: {
+              description: params.description,
+              subagent_type: params.subagent_type,
+            },
+          })
+      const subagent = approval?.amendment ?? params.subagent_type
+      const amended = approval?.amendment
+        ? {
+            from: params.subagent_type,
+            to: approval.amendment,
+          }
+        : undefined
 
-      // Skip permission check when user explicitly invoked via @ or command subtask
-      if (!ctx.extra?.bypassAgentCheck) {
-        await ctx.ask({
-          permission: "task",
-          patterns: [params.subagent_type],
-          always: ["*"],
-          metadata: {
-            description: params.description,
-            subagent_type: params.subagent_type,
-          },
-        })
-      }
-
-      const agent = await Agent.get(params.subagent_type)
-      if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
+      const agent = await Agent.get(subagent)
+      if (!agent) throw new Error(`Unknown agent type: ${subagent} is not a valid agent type`)
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
@@ -136,6 +141,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         metadata: {
           sessionId: session.id,
           model,
+          ...(amended ? { amended } : {}),
         },
       })
 
@@ -168,6 +174,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
 
       const output = [
+        ...(amended ? [`user amended subagent_type: ${amended.from} -> ${amended.to}`, ""] : []),
         `task_id: ${session.id} (for resuming to continue this task if needed)`,
         "",
         "<task_result>",

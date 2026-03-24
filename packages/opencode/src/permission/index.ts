@@ -23,6 +23,7 @@ export namespace PermissionNext {
   export const Request = S.Request
   export type Request = S.Request
   export const Reply = S.Reply
+  export const ReplyInput = S.ReplyInput
   export type Reply = S.Reply
   export const Approval = S.Approval
   export const Event = S.Event

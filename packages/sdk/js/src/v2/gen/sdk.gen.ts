@@ -2455,7 +2455,8 @@ export class Permission extends HeyApiClient {
       permissionID: string
       directory?: string
       workspace?: string
-      response?: "once" | "always" | "reject"
+      response?: "once" | "always" | "reject" | "amend"
+      message?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2469,6 +2470,7 @@ export class Permission extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "response" },
+            { in: "body", key: "message" },
           ],
         },
       ],
@@ -2492,10 +2494,11 @@ export class Permission extends HeyApiClient {
    */
   public reply<ThrowOnError extends boolean = false>(
     parameters: {
-      requestID: string
+      path_requestID: string
       directory?: string
       workspace?: string
-      reply?: "once" | "always" | "reject"
+      body_requestID?: string
+      reply?: "once" | "always" | "reject" | "amend"
       message?: string
     },
     options?: Options<never, ThrowOnError>,
@@ -2505,9 +2508,18 @@ export class Permission extends HeyApiClient {
       [
         {
           args: [
-            { in: "path", key: "requestID" },
+            {
+              in: "path",
+              key: "path_requestID",
+              map: "requestID",
+            },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            {
+              in: "body",
+              key: "body_requestID",
+              map: "requestID",
+            },
             { in: "body", key: "reply" },
             { in: "body", key: "message" },
           ],
