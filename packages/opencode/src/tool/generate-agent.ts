@@ -13,8 +13,8 @@ export const GenerateAgentTool = Tool.define("generate-agent", {
       .describe("What the agent should do. If omitted, infer it from the current session."),
     model: z
       .object({
-        providerID: ProviderID.zod,
-        modelID: ModelID.zod,
+        providerID: z.string(),
+        modelID: z.string(),
       })
       .optional()
       .describe("Model to use when generating the new agent."),
@@ -28,6 +28,12 @@ export const GenerateAgentTool = Tool.define("generate-agent", {
   async execute(input, ctx) {
     const result = await AgentCreate.create({
       ...input,
+      model: input.model
+        ? {
+            providerID: ProviderID.make(input.model.providerID),
+            modelID: ModelID.make(input.model.modelID),
+          }
+        : undefined,
       agent: ctx.agent,
       sessionID: ctx.sessionID,
       messages: ctx.messages,
