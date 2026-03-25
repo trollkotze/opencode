@@ -2,8 +2,10 @@ import { Installation } from "@/installation"
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
 import {
+  generateText,
   streamText,
   wrapLanguageModel,
+  type GenerateTextResult,
   type ModelMessage,
   type StreamTextResult,
   type Tool,
@@ -53,6 +55,10 @@ export namespace LLM {
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
+
+  export type GenerateInput = Omit<StreamInput, "tools" | "toolChoice"> & {
+    maxOutputTokens?: number
+  }
 
   export type DebugOptions = {
     redact?: boolean
@@ -268,7 +274,7 @@ export namespace LLM {
     }
   }
 
-  export async function stream(input: StreamInput) {
+  async function prepare(input: Pick<StreamInput, "user" | "sessionID" | "model" | "agent" | "system" | "small">) {
     const l = log
       .clone()
       .tag("providerID", input.model.providerID)
@@ -372,6 +378,63 @@ export namespace LLM {
     const maxOutputTokens =
       isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
 
+    const requestHeaders = {
+      ...(input.model.providerID.startsWith("opencode")
+        ? {
+            "x-opencode-project": Instance.project.id,
+            "x-opencode-session": input.sessionID,
+            "x-opencode-request": input.user.id,
+            "x-opencode-client": Flag.OPENCODE_CLIENT,
+          }
+        : input.model.providerID !== "anthropic"
+          ? {
+              "User-Agent": `opencode/${Installation.VERSION}`,
+            }
+          : undefined),
+      ...input.model.headers,
+      ...headers,
+    }
+
+    return {
+      cfg,
+      headers,
+      isCodex,
+      language,
+      l,
+      maxOutputTokens,
+      options,
+      params,
+      provider,
+      requestHeaders,
+      system,
+    }
+  }
+
+  function wrap(input: {
+    language: Awaited<ReturnType<typeof Provider.getLanguage>>
+    model: Provider.Model
+    options: any
+  }) {
+    return wrapLanguageModel({
+      model: input.language,
+      middleware: [
+        {
+          async transformParams(args) {
+            if (args.type === "stream" || args.type === "generate") {
+              // @ts-expect-error
+              args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, input.options)
+            }
+            return args.params
+          },
+        },
+      ],
+    })
+  }
+
+  export async function stream(input: StreamInput) {
+    const { cfg, l, language, maxOutputTokens, options, params, provider, requestHeaders, system } =
+      await prepare(input)
+
     const tools = await resolveTools(input)
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
@@ -423,22 +486,7 @@ export namespace LLM {
       toolChoice: input.toolChoice,
       maxOutputTokens,
       abortSignal: input.abort,
-      headers: {
-        ...(input.model.providerID.startsWith("opencode")
-          ? {
-              "x-opencode-project": Instance.project.id,
-              "x-opencode-session": input.sessionID,
-              "x-opencode-request": input.user.id,
-              "x-opencode-client": Flag.OPENCODE_CLIENT,
-            }
-          : input.model.providerID !== "anthropic"
-            ? {
-                "User-Agent": `opencode/${Installation.VERSION}`,
-              }
-            : undefined),
-        ...input.model.headers,
-        ...headers,
-      },
+      headers: requestHeaders,
       maxRetries: input.retries ?? 0,
       messages: [
         ...system.map(
@@ -449,20 +497,7 @@ export namespace LLM {
         ),
         ...input.messages,
       ],
-      model: wrapLanguageModel({
-        model: language,
-        middleware: [
-          {
-            async transformParams(args) {
-              if (args.type === "stream") {
-                // @ts-expect-error
-                args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
-              }
-              return args.params
-            },
-          },
-        ],
-      }),
+      model: wrap({ language, model: input.model, options }),
       experimental_telemetry: {
         isEnabled: cfg.experimental?.openTelemetry,
         metadata: {
@@ -470,6 +505,31 @@ export namespace LLM {
           sessionId: input.sessionID,
         },
       },
+    })
+  }
+
+  export async function generate(input: GenerateInput): Promise<GenerateTextResult<Record<string, Tool>, never>> {
+    const { language, maxOutputTokens, options, params, requestHeaders, system } = await prepare(input)
+
+    return generateText({
+      temperature: params.temperature,
+      topP: params.topP,
+      topK: params.topK,
+      providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+      maxOutputTokens: input.maxOutputTokens ?? maxOutputTokens,
+      abortSignal: input.abort,
+      headers: requestHeaders,
+      maxRetries: input.retries ?? 0,
+      messages: [
+        ...system.map(
+          (x): ModelMessage => ({
+            role: "system",
+            content: x,
+          }),
+        ),
+        ...input.messages,
+      ],
+      model: wrap({ language, model: input.model, options }),
     })
   }
 

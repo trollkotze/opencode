@@ -65,8 +65,12 @@ import type {
   McpLocalConfig,
   McpRemoteConfig,
   McpStatusResponses,
+  MessageContextErrors,
+  MessageContextResponses,
   OutputFormat,
   Part as Part2,
+  PartContextErrors,
+  PartContextResponses,
   PartDeleteErrors,
   PartDeleteResponses,
   PartUpdateErrors,
@@ -2439,6 +2443,117 @@ export class Part extends HeyApiClient {
       },
     })
   }
+
+  /**
+   * Apply a context action to a message part
+   */
+  public context<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      partID: string
+      directory?: string
+      workspace?: string
+      body?:
+        | {
+            action: "compact"
+          }
+        | {
+            action: "restore"
+          }
+        | {
+            action: "exclude"
+          }
+        | {
+            action: "include"
+          }
+        | {
+            action: "summarize"
+            model: {
+              providerID: string
+              modelID: string
+            }
+          }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "path", key: "partID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "body", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PartContextResponses, PartContextErrors, ThrowOnError>({
+      url: "/session/{sessionID}/message/{messageID}/part/{partID}/context",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Message extends HeyApiClient {
+  /**
+   * Apply a context action to a message
+   */
+  public context<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      directory?: string
+      workspace?: string
+      body?:
+        | {
+            action: "summarize"
+            model: {
+              providerID: string
+              modelID: string
+            }
+          }
+        | {
+            action: "restore"
+          }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "body", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<MessageContextResponses, MessageContextErrors, ThrowOnError>({
+      url: "/session/{sessionID}/message/{messageID}/context",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
 }
 
 export class Permission extends HeyApiClient {
@@ -4184,6 +4299,11 @@ export class OpencodeClient extends HeyApiClient {
   private _part?: Part
   get part(): Part {
     return (this._part ??= new Part({ client: this.client }))
+  }
+
+  private _message?: Message
+  get message(): Message {
+    return (this._message ??= new Message({ client: this.client }))
   }
 
   private _permission?: Permission

@@ -1,6 +1,7 @@
 import { createMemo, onMount } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { useSDK } from "@tui/context/sdk"
+import { useLocal } from "@tui/context/local"
 import { useDialog } from "../../ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
@@ -19,9 +20,11 @@ export function DialogPart(props: {
 }) {
   const sync = useSync()
   const sdk = useSDK()
+  const local = useLocal()
   const dialog = useDialog()
   const renderer = useRenderer()
   const route = useRoute()
+  const toast = useToast()
 
   const part = createMemo(() => {
     const parts = sync.data.part[props.messageID] ?? []
@@ -31,6 +34,14 @@ export function DialogPart(props: {
   async function patchPart(data: Part) {
     await sdk.fetch(`${sdk.url}/session/${props.sessionID}/message/${props.messageID}/part/${props.partID}`, {
       method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+  }
+
+  async function act(data: Record<string, unknown>) {
+    await sdk.fetch(`${sdk.url}/session/${props.sessionID}/message/${props.messageID}/part/${props.partID}/context`, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
@@ -67,6 +78,12 @@ export function DialogPart(props: {
         onSelect: fork,
       },
     ]
+  }
+
+  function picked() {
+    const model = local.model.current()
+    if (model) return model
+    toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
   }
 
   function textActions(p: TextPart): DialogSelectOption<string>[] {
@@ -106,11 +123,11 @@ export function DialogPart(props: {
 
     if (p.compacted) {
       actions.push({
-        title: "Uncompact",
+        title: "Restore full text",
         value: "uncompact",
         description: "restore full text in context",
         onSelect: async (ctx) => {
-          await patchPart({ ...p, compacted: undefined } as any)
+          await act({ action: "restore" })
           ctx.clear()
         },
       })
@@ -118,9 +135,20 @@ export function DialogPart(props: {
       actions.push({
         title: "Compact",
         value: "compact",
-        description: "replace with summary in context",
+        description: "replace with concise summary in context",
         onSelect: async (ctx) => {
-          await patchPart({ ...p, compacted: { time: Date.now() } } as any)
+          const model = picked()
+          if (!model) return
+          await act({ action: "summarize", model })
+          ctx.clear()
+        },
+      })
+      actions.push({
+        title: "Compact as placeholder",
+        value: "compact.placeholder",
+        description: "replace with compacted placeholder",
+        onSelect: async (ctx) => {
+          await act({ action: "compact" })
           ctx.clear()
         },
       })
@@ -132,7 +160,7 @@ export function DialogPart(props: {
         value: "include",
         description: "restore to LLM context",
         onSelect: async (ctx) => {
-          await patchPart({ ...p, ignored: false } as any)
+          await act({ action: "include" })
           ctx.clear()
         },
       })
@@ -142,7 +170,7 @@ export function DialogPart(props: {
         value: "exclude",
         description: "hide from LLM, keep visible",
         onSelect: async (ctx) => {
-          await patchPart({ ...p, ignored: true } as any)
+          await act({ action: "exclude" })
           ctx.clear()
         },
       })
@@ -165,25 +193,23 @@ export function DialogPart(props: {
     const actions: DialogSelectOption<string>[] = []
 
     if (p.state.status === "completed") {
-      if ((p.state as any).time?.compacted) {
+      if (p.state.time.compacted) {
         actions.push({
           title: "Restore output",
           value: "uncompact",
           description: "restore tool output in context",
           onSelect: async (ctx) => {
-            const state = { ...p.state, time: { ...(p.state as any).time, compacted: undefined } }
-            await patchPart({ ...p, state } as any)
+            await act({ action: "restore" })
             ctx.clear()
           },
         })
       } else {
         actions.push({
-          title: "Compact output",
+          title: "Compact",
           value: "compact",
           description: "clear tool output from context",
           onSelect: async (ctx) => {
-            const state = { ...p.state, time: { ...(p.state as any).time, compacted: Date.now() } }
-            await patchPart({ ...p, state } as any)
+            await act({ action: "compact" })
             ctx.clear()
           },
         })
@@ -208,11 +234,11 @@ export function DialogPart(props: {
 
     if (p.compacted) {
       actions.push({
-        title: "Uncompact",
+        title: "Restore reasoning",
         value: "uncompact",
         description: "restore reasoning in context",
         onSelect: async (ctx) => {
-          await patchPart({ ...p, compacted: undefined } as any)
+          await act({ action: "restore" })
           ctx.clear()
         },
       })
@@ -222,7 +248,7 @@ export function DialogPart(props: {
         value: "compact",
         description: "exclude reasoning from context",
         onSelect: async (ctx) => {
-          await patchPart({ ...p, compacted: { time: Date.now() } } as any)
+          await act({ action: "compact" })
           ctx.clear()
         },
       })

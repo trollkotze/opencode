@@ -5,13 +5,12 @@ import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { Clipboard } from "@tui/util/clipboard"
 import { useDialog } from "../../ui/dialog"
-import { DialogPart } from "./dialog-part"
 import { DialogEditPart } from "./dialog-part"
 import { useRenderer } from "@opentui/solid"
 import { Editor } from "../../util/editor"
+import { useToast } from "../../ui/toast"
 import type { PromptInfo } from "@tui/component/prompt/history"
 import { useLocal } from "@tui/context/local"
-import { useToast } from "../../ui/toast"
 import { canContinue } from "../../util/continue"
 
 export function DialogMessage(props: {
@@ -22,9 +21,9 @@ export function DialogMessage(props: {
   const sync = useSync()
   const sdk = useSDK()
   const local = useLocal()
-  const toast = useToast()
   const dialog = useDialog()
   const renderer = useRenderer()
+  const toast = useToast()
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
   const route = useRoute()
   const parts = createMemo(() => sync.data.part[props.messageID] ?? [])
@@ -70,6 +69,29 @@ export function DialogMessage(props: {
     const parts = sync.data.part[props.messageID] ?? []
     return parts.find((p) => p.type === "text" && !p.synthetic)
   })
+
+  const compacted = createMemo(() => {
+    const parts = sync.data.part[props.messageID] ?? []
+    return parts.some((part) => {
+      if (part.type === "text") return !!part.compacted
+      if (part.type === "reasoning") return !!part.compacted
+      return part.type === "tool" && part.state.status === "completed" && !!part.state.time.compacted
+    })
+  })
+
+  async function act(data: Record<string, unknown>) {
+    await sdk.fetch(`${sdk.url}/session/${props.sessionID}/message/${props.messageID}/context`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+  }
+
+  function picked() {
+    const model = local.model.current()
+    if (model) return model
+    toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
+  }
 
   function prompt() {
     const msg = message()
@@ -156,6 +178,34 @@ export function DialogMessage(props: {
                             },
                           )
                         }
+                      },
+                    },
+                  ]
+                : []),
+            ]
+          : []),
+        ...(message()?.role === "assistant" && textPart()
+          ? [
+              {
+                title: "Compact message",
+                value: "message.compact",
+                description: "summarize this whole assistant turn",
+                onSelect: async () => {
+                  const model = picked()
+                  if (!model) return
+                  await act({ action: "summarize", model })
+                  dialog.clear()
+                },
+              },
+              ...(compacted()
+                ? [
+                    {
+                      title: "Restore message",
+                      value: "message.restore",
+                      description: "restore full parts in context",
+                      onSelect: async () => {
+                        await act({ action: "restore" })
+                        dialog.clear()
                       },
                     },
                   ]

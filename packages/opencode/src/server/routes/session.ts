@@ -783,6 +783,82 @@ export const SessionRoutes = lazy(() =>
         return c.json(true)
       },
     )
+    .post(
+      "/:sessionID/message/:messageID/part/:partID/context",
+      describeRoute({
+        description: "Apply a context action to a message part",
+        operationId: "part.context",
+        responses: {
+          200: {
+            description: "Applied context action",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+          messageID: MessageID.zod,
+          partID: PartID.zod,
+        }),
+      ),
+      validator("json", SessionCompaction.PartAction),
+      async (c) => {
+        const params = c.req.valid("param")
+        const body = c.req.valid("json")
+        SessionPrompt.assertNotBusy(params.sessionID)
+        await SessionCompaction.part({
+          sessionID: params.sessionID,
+          messageID: params.messageID,
+          partID: params.partID,
+          action: body,
+        })
+        return c.json(true)
+      },
+    )
+    .post(
+      "/:sessionID/message/:messageID/context",
+      describeRoute({
+        description: "Apply a context action to a message",
+        operationId: "message.context",
+        responses: {
+          200: {
+            description: "Applied message context action",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+          messageID: MessageID.zod,
+        }),
+      ),
+      validator("json", SessionCompaction.MessageAction),
+      async (c) => {
+        const params = c.req.valid("param")
+        const body = c.req.valid("json")
+        SessionPrompt.assertNotBusy(params.sessionID)
+        await SessionCompaction.message({
+          sessionID: params.sessionID,
+          messageID: params.messageID,
+          action: body,
+        })
+        return c.json(true)
+      },
+    )
     .patch(
       "/:sessionID/message/:messageID/part/:partID",
       describeRoute({

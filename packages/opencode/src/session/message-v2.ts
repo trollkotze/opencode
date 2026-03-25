@@ -642,9 +642,11 @@ export namespace MessageV2 {
         for (const part of msg.parts) {
           if (part.type === "text" && !part.ignored) {
             if (part.compacted) {
+              const text = part.compacted.summary ?? "[Previous text content compacted]"
+              if (!text) continue
               userMessage.parts.push({
                 type: "text",
-                text: part.compacted.summary ?? "[Previous text content compacted]",
+                text,
               })
             } else {
               userMessage.parts.push({
@@ -706,9 +708,11 @@ export namespace MessageV2 {
         for (const part of msg.parts) {
           if (part.type === "text" && !part.ignored) {
             if (part.compacted) {
+              const text = part.compacted.summary ?? "[Previous text content compacted]"
+              if (!text) continue
               assistantMessage.parts.push({
                 type: "text",
-                text: part.compacted.summary ?? "[Previous text content compacted]",
+                text,
               })
             } else {
               assistantMessage.parts.push({

@@ -54,6 +54,7 @@ import { useKeybind } from "@tui/context/keybind"
 import { Header } from "./header"
 import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
+import { DialogSelect } from "../../ui/dialog-select"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import { DialogPart } from "./dialog-part"
@@ -577,8 +578,7 @@ export function Session() {
         const last = messages().findLast((x) => x.role === "assistant" && (!revertID || x.id < revertID)) as
           | AssistantMessage
           | undefined
-        if (!last || last.role !== "assistant") return false
-        return canResume(last, sync.data.part[last.id] ?? [])
+        return canResume(last, last ? (sync.data.part[last.id] ?? []) : [])
       })(),
       onSelect: (dialog) => {
         dialog.clear()
@@ -622,7 +622,7 @@ export function Session() {
                   : p.type === "tool"
                     ? `${(p as any).tool}: ${JSON.stringify((p as any).state?.input ?? {}).slice(0, 40)}`
                     : "reasoning",
-              description: `${m.role} · ${p.type}${(p as any).compacted ? " [compacted]" : ""}${(p as any).ignored ? " [excluded]" : ""}`,
+              description: `${m.role} · ${p.type}${p.type === "tool" && p.state.status === "completed" && p.state.time.compacted ? " [compacted]" : ""}${p.type !== "tool" && (p as any).compacted ? " [compacted]" : ""}${p.type === "text" && p.ignored ? " [excluded]" : ""}`,
               category: m.role === "user" ? "User" : "Assistant",
               onSelect: () => {
                 dialog.replace(() => (
@@ -1375,6 +1375,22 @@ function UserMessage(props: {
   const color = createMemo(() => local.agent.color(props.message.agent))
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
+  const textValue = createMemo(() => {
+    const part = text()
+    if (!part) return ""
+    if (part.ignored) return part.text
+    if (part.compacted?.summary) return part.compacted.summary
+    if (part.compacted) return "[compacted]"
+    return part.text
+  })
+  const textState = createMemo(() => {
+    const part = text()
+    if (!part) return undefined
+    if (part.ignored) return "[excluded from context]"
+    if (part.compacted?.summary) return "[compacted summary]"
+    if (part.compacted) return undefined
+    return undefined
+  })
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
 
@@ -1402,7 +1418,12 @@ function UserMessage(props: {
             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
             flexShrink={0}
           >
-            <text fg={theme.text}>{text()?.text}</text>
+            <box flexDirection="column" gap={textState() ? 1 : 0}>
+              <text fg={theme.text}>{textValue()}</text>
+              <Show when={textState()}>
+                <text fg={theme.textMuted}>{textState()}</text>
+              </Show>
+            </box>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
                 <For each={files()}>
@@ -1460,6 +1481,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const sync = useSync()
   const sdk = useSDK()
   const dialog = useDialog()
+  const renderer = useRenderer()
   const toast = useToast()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
 
@@ -1498,6 +1520,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           variant: "error",
         })
       })
+  }
+
+  function openActions() {
+    if (renderer.getSelection()?.getSelectedText()) return
+    dialog.replace(() => <DialogMessage messageID={props.message.id} sessionID={props.message.sessionID} />)
   }
 
   const keybind = useKeybind()
@@ -1548,7 +1575,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       </Show>
       <Switch>
         <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
-          <box paddingLeft={3}>
+          <box paddingLeft={3} onMouseUp={openActions}>
             <text marginTop={1}>
               <span
                 style={{
@@ -1641,6 +1668,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
   const dialog = useDialog()
   const compacted = createMemo(() => !!props.part.compacted)
   const excluded = createMemo(() => !!props.part.ignored)
+  const summary = createMemo(() => props.part.compacted?.summary)
 
   function openActions() {
     dialog.replace(() => (
@@ -1656,8 +1684,20 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
   return (
     <Show when={props.part.text.trim()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0} onMouseUp={openActions}>
-        <Show when={compacted() || excluded()}>
-          <text fg={theme.textMuted}>{compacted() ? "[compacted]" : "[excluded from context]"}</text>
+        <Show when={excluded()}>
+          <box flexDirection="column" gap={1}>
+            <text fg={theme.text}>{props.part.text.trim()}</text>
+            <text fg={theme.textMuted}>[excluded from context]</text>
+          </box>
+        </Show>
+        <Show when={!excluded() && compacted() && !!summary()}>
+          <box flexDirection="column" gap={1}>
+            <text fg={theme.text}>{summary()}</text>
+            <text fg={theme.textMuted}>[compacted summary]</text>
+          </box>
+        </Show>
+        <Show when={!excluded() && compacted() && !summary()}>
+          <text fg={theme.textMuted}>[compacted]</text>
         </Show>
         <Show when={!compacted() && !excluded()}>
           <Switch>
@@ -1692,6 +1732,18 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
 function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMessage }) {
   const ctx = use()
   const sync = useSync()
+  const dialog = useDialog()
+
+  function openActions() {
+    dialog.replace(() => (
+      <DialogPart
+        sessionID={props.message.sessionID}
+        messageID={props.message.id}
+        partID={props.part.id}
+        role="assistant"
+      />
+    ))
+  }
 
   // Hide tool if showDetails is false and tool completed successfully
   const shouldHide = createMemo(() => {
@@ -1699,6 +1751,8 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     if (props.part.state.status !== "completed") return false
     return true
   })
+
+  const compacted = createMemo(() => props.part.state.status === "completed" && !!props.part.state.time.compacted)
 
   const toolprops = {
     get metadata() {
@@ -1721,60 +1775,76 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     get part() {
       return props.part
     },
+    onClick: openActions,
   }
 
   return (
     <Show when={!shouldHide()}>
-      <Switch>
-        <Match when={props.part.tool === "bash"}>
-          <Bash {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "glob"}>
-          <Glob {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "read"}>
-          <Read {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "grep"}>
-          <Grep {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "list"}>
-          <List {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "webfetch"}>
-          <WebFetch {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "codesearch"}>
-          <CodeSearch {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "websearch"}>
-          <WebSearch {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "write"}>
-          <Write {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "edit"}>
-          <Edit {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "task"}>
-          <Task {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "apply_patch"}>
-          <ApplyPatch {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "todowrite"}>
-          <TodoWrite {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "question"}>
-          <Question {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "skill"}>
-          <Skill {...toolprops} />
-        </Match>
-        <Match when={true}>
-          <GenericTool {...toolprops} />
-        </Match>
-      </Switch>
+      <Show
+        when={!compacted()}
+        fallback={
+          <InlineTool
+            icon="⚙"
+            pending="Running tool..."
+            complete={props.part.tool}
+            part={props.part}
+            onClick={openActions}
+          >
+            {props.part.tool} {input(props.part.state.input ?? {})} [compacted]
+          </InlineTool>
+        }
+      >
+        <Switch>
+          <Match when={props.part.tool === "bash"}>
+            <Bash {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "glob"}>
+            <Glob {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "read"}>
+            <Read {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "grep"}>
+            <Grep {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "list"}>
+            <List {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "webfetch"}>
+            <WebFetch {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "codesearch"}>
+            <CodeSearch {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "websearch"}>
+            <WebSearch {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "write"}>
+            <Write {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "edit"}>
+            <Edit {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "task"}>
+            <Task {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "apply_patch"}>
+            <ApplyPatch {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "todowrite"}>
+            <TodoWrite {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "question"}>
+            <Question {...toolprops} />
+          </Match>
+          <Match when={props.part.tool === "skill"}>
+            <Skill {...toolprops} />
+          </Match>
+          <Match when={true}>
+            <GenericTool {...toolprops} />
+          </Match>
+        </Switch>
+      </Show>
     </Show>
   )
 }
@@ -1786,6 +1856,7 @@ type ToolProps<T extends Tool.Info> = {
   tool: string
   output?: string
   part: ToolPart
+  onClick?: () => void
 }
 function GenericTool(props: ToolProps<any>) {
   const { theme } = useTheme()
@@ -1804,20 +1875,18 @@ function GenericTool(props: ToolProps<any>) {
     <Show
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
-        <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
+        <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part} onClick={props.onClick}>
           {props.tool} {input(props.input)}
         </InlineTool>
       }
     >
-      <BlockTool
-        title={`# ${props.tool} ${input(props.input)}`}
-        part={props.part}
-        onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
-      >
+      <BlockTool title={`# ${props.tool} ${input(props.input)}`} part={props.part} onClick={props.onClick}>
         <box gap={1}>
           <text fg={theme.text}>{limited()}</text>
           <Show when={overflow()}>
-            <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+            <text fg={theme.textMuted} onMouseUp={() => setExpanded((prev) => !prev)}>
+              {expanded() ? "Click to collapse" : "Click to expand"}
+            </text>
           </Show>
         </box>
       </BlockTool>
@@ -2015,25 +2084,28 @@ function Bash(props: ToolProps<typeof BashTool>) {
   return (
     <Switch>
       <Match when={props.metadata.output !== undefined}>
-        <BlockTool
-          title={title()}
-          part={props.part}
-          spinner={isRunning()}
-          onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
-        >
+        <BlockTool title={title()} part={props.part} spinner={isRunning()} onClick={props.onClick}>
           <box gap={1}>
             <text fg={theme.text}>$ {props.input.command}</text>
             <Show when={output()}>
               <text fg={theme.text}>{limited()}</text>
             </Show>
             <Show when={overflow()}>
-              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+              <text fg={theme.textMuted} onMouseUp={() => setExpanded((prev) => !prev)}>
+                {expanded() ? "Click to collapse" : "Click to expand"}
+              </text>
             </Show>
           </box>
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="$" pending="Writing command..." complete={props.input.command} part={props.part}>
+        <InlineTool
+          icon="$"
+          pending="Writing command..."
+          complete={props.input.command}
+          part={props.part}
+          onClick={props.onClick}
+        >
           {props.input.command}
         </InlineTool>
       </Match>
@@ -2051,7 +2123,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
   return (
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
-        <BlockTool title={"# Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool title={"# Wrote " + normalizePath(props.input.filePath!)} part={props.part} onClick={props.onClick}>
           <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>
             <code
               conceal={false}
@@ -2065,7 +2137,13 @@ function Write(props: ToolProps<typeof WriteTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
+        <InlineTool
+          icon="←"
+          pending="Preparing write..."
+          complete={props.input.filePath}
+          part={props.part}
+          onClick={props.onClick}
+        >
           Write {normalizePath(props.input.filePath!)}
         </InlineTool>
       </Match>
@@ -2075,7 +2153,13 @@ function Write(props: ToolProps<typeof WriteTool>) {
 
 function Glob(props: ToolProps<typeof GlobTool>) {
   return (
-    <InlineTool icon="✱" pending="Finding files..." complete={props.input.pattern} part={props.part}>
+    <InlineTool
+      icon="✱"
+      pending="Finding files..."
+      complete={props.input.pattern}
+      part={props.part}
+      onClick={props.onClick}
+    >
       Glob "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
       <Show when={props.metadata.count}>
         ({props.metadata.count} {props.metadata.count === 1 ? "match" : "matches"})
@@ -2102,6 +2186,7 @@ function Read(props: ToolProps<typeof ReadTool>) {
         complete={props.input.filePath}
         spinner={isRunning()}
         part={props.part}
+        onClick={props.onClick}
       >
         Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
       </InlineTool>
@@ -2120,7 +2205,13 @@ function Read(props: ToolProps<typeof ReadTool>) {
 
 function Grep(props: ToolProps<typeof GrepTool>) {
   return (
-    <InlineTool icon="✱" pending="Searching content..." complete={props.input.pattern} part={props.part}>
+    <InlineTool
+      icon="✱"
+      pending="Searching content..."
+      complete={props.input.pattern}
+      part={props.part}
+      onClick={props.onClick}
+    >
       Grep "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
       <Show when={props.metadata.matches}>
         ({props.metadata.matches} {props.metadata.matches === 1 ? "match" : "matches"})
@@ -2137,7 +2228,13 @@ function List(props: ToolProps<typeof ListTool>) {
     return ""
   })
   return (
-    <InlineTool icon="→" pending="Listing directory..." complete={props.input.path !== undefined} part={props.part}>
+    <InlineTool
+      icon="→"
+      pending="Listing directory..."
+      complete={props.input.path !== undefined}
+      part={props.part}
+      onClick={props.onClick}
+    >
       List {dir()}
     </InlineTool>
   )
@@ -2145,7 +2242,13 @@ function List(props: ToolProps<typeof ListTool>) {
 
 function WebFetch(props: ToolProps<typeof WebFetchTool>) {
   return (
-    <InlineTool icon="%" pending="Fetching from the web..." complete={(props.input as any).url} part={props.part}>
+    <InlineTool
+      icon="%"
+      pending="Fetching from the web..."
+      complete={(props.input as any).url}
+      part={props.part}
+      onClick={props.onClick}
+    >
       WebFetch {(props.input as any).url}
     </InlineTool>
   )
@@ -2155,7 +2258,7 @@ function CodeSearch(props: ToolProps<any>) {
   const input = props.input as any
   const metadata = props.metadata as any
   return (
-    <InlineTool icon="◇" pending="Searching code..." complete={input.query} part={props.part}>
+    <InlineTool icon="◇" pending="Searching code..." complete={input.query} part={props.part} onClick={props.onClick}>
       Exa Code Search "{input.query}" <Show when={metadata.results}>({metadata.results} results)</Show>
     </InlineTool>
   )
@@ -2165,17 +2268,14 @@ function WebSearch(props: ToolProps<any>) {
   const input = props.input as any
   const metadata = props.metadata as any
   return (
-    <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
+    <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part} onClick={props.onClick}>
       Exa Web Search "{input.query}" <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
     </InlineTool>
   )
 }
 
 function Task(props: ToolProps<typeof TaskTool>) {
-  const { theme } = useTheme()
   const keybind = useKeybind()
-  const { navigate } = useRoute()
-  const local = useLocal()
   const sync = useSync()
 
   onMount(() => {
@@ -2228,11 +2328,7 @@ function Task(props: ToolProps<typeof TaskTool>) {
       complete={props.input.description}
       pending="Delegating..."
       part={props.part}
-      onClick={() => {
-        if (props.metadata.sessionId) {
-          navigate({ type: "session", sessionID: props.metadata.sessionId })
-        }
-      }}
+      onClick={props.onClick}
     >
       {content()}
     </InlineTool>
@@ -2257,7 +2353,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part} onClick={props.onClick}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -2283,7 +2379,13 @@ function Edit(props: ToolProps<typeof EditTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
+        <InlineTool
+          icon="←"
+          pending="Preparing edit..."
+          complete={props.input.filePath}
+          part={props.part}
+          onClick={props.onClick}
+        >
           Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
         </InlineTool>
       </Match>
@@ -2341,7 +2443,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
       <Match when={files().length > 0}>
         <For each={files()}>
           {(file) => (
-            <BlockTool title={title(file)} part={props.part}>
+            <BlockTool title={title(file)} part={props.part} onClick={props.onClick}>
               <Show
                 when={file.type !== "delete"}
                 fallback={
@@ -2358,7 +2460,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
         </For>
       </Match>
       <Match when={true}>
-        <InlineTool icon="%" pending="Preparing patch..." complete={false} part={props.part}>
+        <InlineTool icon="%" pending="Preparing patch..." complete={false} part={props.part} onClick={props.onClick}>
           Patch
         </InlineTool>
       </Match>
@@ -2370,7 +2472,7 @@ function TodoWrite(props: ToolProps<typeof TodoWriteTool>) {
   return (
     <Switch>
       <Match when={props.metadata.todos?.length}>
-        <BlockTool title="# Todos" part={props.part}>
+        <BlockTool title="# Todos" part={props.part} onClick={props.onClick}>
           <box>
             <For each={props.input.todos ?? []}>
               {(todo) => <TodoItem status={todo.status} content={todo.content} />}
@@ -2379,7 +2481,7 @@ function TodoWrite(props: ToolProps<typeof TodoWriteTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="⚙" pending="Updating todos..." complete={false} part={props.part}>
+        <InlineTool icon="⚙" pending="Updating todos..." complete={false} part={props.part} onClick={props.onClick}>
           Updating todos...
         </InlineTool>
       </Match>
@@ -2399,7 +2501,7 @@ function Question(props: ToolProps<typeof QuestionTool>) {
   return (
     <Switch>
       <Match when={props.metadata.answers}>
-        <BlockTool title="# Questions" part={props.part}>
+        <BlockTool title="# Questions" part={props.part} onClick={props.onClick}>
           <box gap={1}>
             <For each={props.input.questions ?? []}>
               {(q, i) => (
@@ -2413,7 +2515,7 @@ function Question(props: ToolProps<typeof QuestionTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="→" pending="Asking questions..." complete={count()} part={props.part}>
+        <InlineTool icon="→" pending="Asking questions..." complete={count()} part={props.part} onClick={props.onClick}>
           Asked {count()} question{count() !== 1 ? "s" : ""}
         </InlineTool>
       </Match>
@@ -2423,7 +2525,13 @@ function Question(props: ToolProps<typeof QuestionTool>) {
 
 function Skill(props: ToolProps<typeof SkillTool>) {
   return (
-    <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
+    <InlineTool
+      icon="→"
+      pending="Loading skill..."
+      complete={props.input.name}
+      part={props.part}
+      onClick={props.onClick}
+    >
       Skill "{props.input.name}"
     </InlineTool>
   )

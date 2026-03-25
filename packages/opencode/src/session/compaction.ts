@@ -15,6 +15,7 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { ProviderTransform } from "@/provider/transform"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { LLM } from "./llm"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -29,6 +30,23 @@ export namespace SessionCompaction {
   }
 
   const COMPACTION_BUFFER = 20_000
+  const ModelRef = z.object({
+    providerID: ProviderID.zod,
+    modelID: ModelID.zod,
+  })
+
+  export const PartAction = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("compact") }),
+    z.object({ action: z.literal("restore") }),
+    z.object({ action: z.literal("exclude") }),
+    z.object({ action: z.literal("include") }),
+    z.object({ action: z.literal("summarize"), model: ModelRef }),
+  ])
+
+  export const MessageAction = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("summarize"), model: ModelRef }),
+    z.object({ action: z.literal("restore") }),
+  ])
 
   export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
     const config = await Config.get()
@@ -98,6 +116,257 @@ export namespace SessionCompaction {
       log.info("pruned", { count: toPrune.length })
     }
   }
+
+  function fail(message: string): never {
+    throw new Error(message)
+  }
+
+  function renderPart(part: MessageV2.Part) {
+    if (part.type === "text") return [`[text ${part.id}]`, part.text].join("\n")
+    if (part.type === "reasoning") return [`[reasoning ${part.id}]`, part.text].join("\n")
+    if (part.type === "tool") {
+      const input = JSON.stringify(part.state.input ?? {}, null, 2)
+      if (part.state.status === "completed") {
+        return [`[tool ${part.id}] ${part.tool}`, "[input]", input, "[output]", part.state.output].join("\n")
+      }
+      if (part.state.status === "error") {
+        return [`[tool ${part.id}] ${part.tool}`, "[input]", input, "[error]", part.state.error].join("\n")
+      }
+      return [`[tool ${part.id}] ${part.tool}`, "[input]", input, `[status] ${part.state.status}`].join("\n")
+    }
+    return `[${part.type} ${part.id}]`
+  }
+
+  function renderMessage(msg: MessageV2.WithParts) {
+    return [
+      `[message ${msg.info.id}] ${msg.info.role}`,
+      ...msg.parts
+        .filter((part) => part.type === "text" || part.type === "reasoning" || part.type === "tool")
+        .map(renderPart),
+    ].join("\n\n")
+  }
+
+  async function messages(sessionID: SessionID) {
+    const msgs = await Session.messages({ sessionID })
+    const user = msgs.findLast((msg) => msg.info.role === "user")?.info as MessageV2.User | undefined
+    if (!user) fail("No user message found")
+    return { msgs, user: user as MessageV2.User }
+  }
+
+  function locate(msgs: MessageV2.WithParts[], messageID: MessageID, partID: PartID) {
+    const msg = msgs.find((item) => item.info.id === messageID)
+    if (!msg) fail(`Message not found: ${messageID}`)
+    const part = msg.parts.find((item) => item.id === partID)
+    if (!part) fail(`Part not found: ${partID}`)
+    return { msg: msg as MessageV2.WithParts, part: part as MessageV2.Part }
+  }
+
+  async function model(input: { user: MessageV2.User; model?: z.infer<typeof ModelRef> }) {
+    const agent = await Agent.get("compaction")
+    if (agent.model) return { agent, model: await Provider.getModel(agent.model.providerID, agent.model.modelID) }
+    const ref = input.model ?? input.user.model
+    return { agent, model: await Provider.getModel(ref.providerID, ref.modelID) }
+  }
+
+  async function summarize(input: {
+    sessionID: SessionID
+    msgs: MessageV2.WithParts[]
+    user: MessageV2.User
+    model: z.infer<typeof ModelRef>
+    prompt: string
+  }) {
+    const ctx = await model(input)
+    const msgs = structuredClone(input.msgs)
+    await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+    const result = await LLM.generate({
+      abort: AbortSignal.timeout(60_000),
+      agent: ctx.agent,
+      messages: [
+        ...MessageV2.toModelMessages(msgs, ctx.model, { stripMedia: true }),
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: input.prompt,
+            },
+          ],
+        },
+      ],
+      model: ctx.model,
+      retries: 0,
+      sessionID: input.sessionID,
+      small: false,
+      system: [],
+      user: input.user,
+    })
+    return result.text.trim()
+  }
+
+  export const part = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      partID: PartID.zod,
+      action: PartAction,
+    }),
+    async (input) => {
+      const ctx = await messages(input.sessionID)
+      const target = locate(ctx.msgs, input.messageID, input.partID)
+      const now = Date.now()
+
+      if (target.part.type === "text") {
+        if (input.action.action === "compact") {
+          target.part.ignored = false
+          target.part.compacted = { time: now }
+          return Session.updatePart(target.part)
+        }
+        if (input.action.action === "restore") {
+          target.part.compacted = undefined
+          return Session.updatePart(target.part)
+        }
+        if (input.action.action === "exclude") {
+          target.part.ignored = true
+          target.part.compacted = undefined
+          return Session.updatePart(target.part)
+        }
+        if (input.action.action === "include") {
+          target.part.ignored = false
+          return Session.updatePart(target.part)
+        }
+        const text = await summarize({
+          sessionID: input.sessionID,
+          msgs: ctx.msgs,
+          user: ctx.user,
+          model: input.action.model,
+          prompt: [
+            "You are compacting one text part in the conversation for future context reuse.",
+            "Use the full conversation above as context, but only summarize the target text below.",
+            "Return only the replacement text. Keep it concise, but preserve facts, decisions, relevant file paths, concrete outputs, and unfinished work.",
+            "Do not mention that this is a summary.",
+            "",
+            `Target message: ${target.msg.info.id}`,
+            `Target role: ${target.msg.info.role}`,
+            `Target part: ${target.part.id}`,
+            "",
+            "<target>",
+            target.part.text,
+            "</target>",
+          ].join("\n"),
+        })
+        target.part.ignored = false
+        target.part.compacted = { time: now, summary: text }
+        return Session.updatePart(target.part)
+      }
+
+      if (target.part.type === "reasoning") {
+        if (input.action.action === "compact") {
+          target.part.compacted = { time: now }
+          return Session.updatePart(target.part)
+        }
+        if (input.action.action === "restore") {
+          target.part.compacted = undefined
+          return Session.updatePart(target.part)
+        }
+        fail(`Unsupported reasoning action: ${input.action.action}`)
+      }
+
+      if (target.part.type === "tool") {
+        const state = target.part.state
+        if (state.status !== "completed") fail("Only completed tool calls can be compacted")
+        const done = state as MessageV2.ToolStateCompleted
+        if (input.action.action === "compact") {
+          done.time.compacted = now
+          return Session.updatePart(target.part)
+        }
+        if (input.action.action === "restore") {
+          done.time.compacted = undefined
+          return Session.updatePart(target.part)
+        }
+        fail(`Unsupported tool action: ${input.action.action}`)
+      }
+
+      fail(`Unsupported part type: ${target.part.type}`)
+    },
+  )
+
+  export const message = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      action: MessageAction,
+    }),
+    async (input) => {
+      const ctx = await messages(input.sessionID)
+      const target = ctx.msgs.find((item) => item.info.id === input.messageID) as MessageV2.WithParts | undefined
+      if (!target) fail(`Message not found: ${input.messageID}`)
+      const parts = target.parts.filter(
+        (part) => part.type === "text" || part.type === "reasoning" || part.type === "tool",
+      )
+      const text = parts.filter((part): part is MessageV2.TextPart => part.type === "text" && !part.synthetic)
+      if (text.length === 0) fail("Message has no text parts to summarize")
+
+      if (input.action.action === "restore") {
+        for (const part of parts) {
+          if (part.type === "text") {
+            part.compacted = undefined
+            await Session.updatePart(part)
+            continue
+          }
+          if (part.type === "reasoning") {
+            part.compacted = undefined
+            await Session.updatePart(part)
+            continue
+          }
+          if (part.type === "tool" && part.state.status === "completed") {
+            part.state.time.compacted = undefined
+            await Session.updatePart(part)
+          }
+        }
+        return true
+      }
+
+      const sum = await summarize({
+        sessionID: input.sessionID,
+        msgs: ctx.msgs,
+        user: ctx.user,
+        model: input.action.model,
+        prompt: [
+          "You are compacting one full message in the conversation for future context reuse.",
+          "Use the full conversation above as context.",
+          "Summarize the target message below so another model can continue the work without needing the full original turn.",
+          "Preserve concrete results, important decisions, relevant file paths, useful tool outcomes, and any next steps or open questions.",
+          "Return only the replacement text. Do not mention that this is a summary.",
+          "",
+          `Target message: ${target.info.id}`,
+          `Target role: ${target.info.role}`,
+          "",
+          "<target-message>",
+          renderMessage(target),
+          "</target-message>",
+        ].join("\n"),
+      })
+
+      const now = Date.now()
+      for (const [idx, part] of text.entries()) {
+        part.ignored = false
+        part.compacted = idx === 0 ? { time: now, summary: sum } : { time: now, summary: "" }
+        await Session.updatePart(part)
+      }
+      for (const part of parts) {
+        if (part.type === "reasoning") {
+          part.compacted = { time: now }
+          await Session.updatePart(part)
+          continue
+        }
+        if (part.type === "tool" && part.state.status === "completed") {
+          part.state.time.compacted = now
+          await Session.updatePart(part)
+        }
+      }
+      return true
+    },
+  )
 
   export async function process(input: {
     parentID: MessageID

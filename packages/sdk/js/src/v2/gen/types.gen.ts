@@ -3559,6 +3559,106 @@ export type PartUpdateResponses = {
 
 export type PartUpdateResponse = PartUpdateResponses[keyof PartUpdateResponses]
 
+export type PartContextData = {
+  body?:
+    | {
+        action: "compact"
+      }
+    | {
+        action: "restore"
+      }
+    | {
+        action: "exclude"
+      }
+    | {
+        action: "include"
+      }
+    | {
+        action: "summarize"
+        model: {
+          providerID: string
+          modelID: string
+        }
+      }
+  path: {
+    sessionID: string
+    messageID: string
+    partID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/message/{messageID}/part/{partID}/context"
+}
+
+export type PartContextErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PartContextError = PartContextErrors[keyof PartContextErrors]
+
+export type PartContextResponses = {
+  /**
+   * Applied context action
+   */
+  200: boolean
+}
+
+export type PartContextResponse = PartContextResponses[keyof PartContextResponses]
+
+export type MessageContextData = {
+  body?:
+    | {
+        action: "summarize"
+        model: {
+          providerID: string
+          modelID: string
+        }
+      }
+    | {
+        action: "restore"
+      }
+  path: {
+    sessionID: string
+    messageID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/message/{messageID}/context"
+}
+
+export type MessageContextErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type MessageContextError = MessageContextErrors[keyof MessageContextErrors]
+
+export type MessageContextResponses = {
+  /**
+   * Applied message context action
+   */
+  200: boolean
+}
+
+export type MessageContextResponse = MessageContextResponses[keyof MessageContextResponses]
+
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string
