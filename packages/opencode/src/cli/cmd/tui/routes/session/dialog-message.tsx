@@ -5,6 +5,9 @@ import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { Clipboard } from "@tui/util/clipboard"
 import type { PromptInfo } from "@tui/component/prompt/history"
+import { useLocal } from "@tui/context/local"
+import { useToast } from "../../ui/toast"
+import { canContinue } from "../../util/continue"
 
 export function DialogMessage(props: {
   messageID: string
@@ -13,8 +16,48 @@ export function DialogMessage(props: {
 }) {
   const sync = useSync()
   const sdk = useSDK()
+  const local = useLocal()
+  const toast = useToast()
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
   const route = useRoute()
+  const parts = createMemo(() => sync.data.part[props.messageID] ?? [])
+  const assistant = createMemo(() => {
+    const msg = message()
+    return msg?.role === "assistant" ? msg : undefined
+  })
+
+  function resume(dialog: { clear(): void }, fork: boolean) {
+    const msg = message()
+    const model = local.model.current()
+    if (!msg || msg.role !== "assistant") return
+    if (!model) {
+      toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
+      return
+    }
+    sdk.client.session
+      .resume({
+        sessionID: props.sessionID,
+        messageID: msg.id,
+        model: { providerID: model.providerID, modelID: model.modelID },
+        agent: local.agent.current().name,
+        fork,
+      })
+      .then((res) => {
+        if (fork && res.data?.sessionID) {
+          route.navigate({
+            type: "session",
+            sessionID: res.data.sessionID,
+          })
+        }
+      })
+      .catch((err: unknown) => {
+        toast.show({
+          message: err instanceof Error ? err.message : "Failed to continue",
+          variant: "error",
+        })
+      })
+    dialog.clear()
+  }
 
   function prompt() {
     const msg = message()
@@ -38,6 +81,22 @@ export function DialogMessage(props: {
     <DialogSelect
       title="Message Actions"
       options={[
+        ...(assistant() && canContinue(assistant()!, parts())
+          ? [
+              {
+                title: "Continue here",
+                value: "session.continue.here",
+                description: "remove later messages and continue",
+                onSelect: (dialog: { clear(): void }) => resume(dialog, false),
+              },
+              {
+                title: "Continue in fork",
+                value: "session.continue.fork",
+                description: "continue from here in a new session",
+                onSelect: (dialog: { clear(): void }) => resume(dialog, true),
+              },
+            ]
+          : []),
         {
           title: "Revert",
           value: "session.revert",

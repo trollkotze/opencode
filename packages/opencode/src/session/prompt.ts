@@ -189,59 +189,134 @@ export namespace SessionPrompt {
 
   export const ContinueInput = z.object({
     sessionID: SessionID.zod,
+    messageID: MessageID.zod.optional(),
     model: z
       .object({
         providerID: ProviderID.zod,
         modelID: ModelID.zod,
       })
       .optional(),
+    agent: z.string().optional(),
+    fork: z.boolean().optional(),
   })
   export type ContinueInput = z.infer<typeof ContinueInput>
 
+  function hasBody(parts: MessageV2.Part[]) {
+    return parts.some((part) => part.type === "text" || part.type === "tool" || part.type === "reasoning")
+  }
+
+  async function trim(sessionID: SessionID, messageID: MessageID) {
+    const msgs = await Session.messages({ sessionID })
+    for (const msg of msgs) {
+      if (msg.info.id <= messageID) continue
+      await Session.removeMessage({ sessionID, messageID: msg.info.id })
+    }
+  }
+
+  async function fork(session: Session.Info, messageID: MessageID) {
+    const next = await Session.createNext({
+      directory: session.directory,
+      workspaceID: session.workspaceID,
+      title: `${session.title} (fork)`,
+    })
+    const msgs = await Session.messages({ sessionID: session.id })
+    const map = new Map<string, MessageID>()
+
+    for (const msg of msgs) {
+      if (msg.info.id > messageID) break
+      const id = MessageID.ascending()
+      map.set(msg.info.id, id)
+      const parentID = msg.info.role === "assistant" && msg.info.parentID ? map.get(msg.info.parentID) : undefined
+      const nextMsg = await Session.updateMessage({
+        ...msg.info,
+        sessionID: next.id,
+        id,
+        ...(parentID ? { parentID } : {}),
+      })
+      for (const part of msg.parts) {
+        await Session.updatePart({
+          ...part,
+          id: PartID.ascending(),
+          messageID: nextMsg.id,
+          sessionID: next.id,
+        })
+      }
+    }
+
+    const id = map.get(messageID)
+    if (!id) throw new Error("No assistant message found to continue")
+    return {
+      sessionID: next.id,
+      messageID: id,
+    }
+  }
+
   export const continueFromError = fn(ContinueInput, async (input) => {
     assertNotBusy(input.sessionID)
-    const session = await Session.get(input.sessionID)
+    const original = await Session.get(input.sessionID)
+    const id = input.messageID
+    if (input.fork && !id) {
+      throw new Error("No assistant message found to continue")
+    }
+    let resumed: { sessionID: SessionID; messageID: MessageID } | undefined
+    if (input.fork) {
+      const messageID = id as MessageID
+      resumed = await fork(original, messageID)
+    }
+    const sessionID = resumed?.sessionID ?? input.sessionID
+    const session = await Session.get(sessionID)
     await SessionRevert.cleanup(session)
 
-    const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
-
-    // find the last assistant message and its parent user message
-    let errored: MessageV2.Assistant | undefined
-    let user: MessageV2.User | undefined
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const msg = msgs[i]
-      if (!errored && msg.info.role === "assistant" && msg.info.error) {
-        errored = msg.info as MessageV2.Assistant
-      }
-      if (errored && msg.info.role === "user") {
-        user = msg.info as MessageV2.User
-        break
-      }
+    let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    const assistant =
+      (input.messageID ?? resumed?.messageID)
+        ? msgs.find((msg) => msg.info.role === "assistant" && msg.info.id === (resumed?.messageID ?? input.messageID))
+        : msgs.findLast((msg) => msg.info.role === "assistant" && (msg.info.error || !msg.info.time.completed))
+    if (!assistant || assistant.info.role !== "assistant") {
+      throw new Error("No assistant message found to continue")
     }
-    if (!errored) throw new Error("No errored assistant message found")
-    if (!user) throw new Error("No user message found before errored assistant message")
 
-    const parts = await MessageV2.parts(errored.id)
-    const hasContent = parts.some((p) => p.type === "text" || p.type === "tool" || p.type === "reasoning")
+    if (!input.fork) {
+      await trim(sessionID, assistant.info.id)
+      msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    }
 
-    // if the model is being changed, update the user message so the loop picks it up
+    const target = msgs.find((msg) => msg.info.role === "assistant" && msg.info.id === assistant.info.id)
+    if (!target || target.info.role !== "assistant") {
+      throw new Error("No assistant message found to continue")
+    }
+    const parentID = target.info.parentID
+    const user = msgs.find((msg) => msg.info.role === "user" && msg.info.id === parentID)
+    if (!user || user.info.role !== "user") {
+      throw new Error("No user message found before assistant message")
+    }
+
     if (input.model) {
-      user.model = input.model
-      await Session.updateMessage(user)
+      user.info.model = input.model
+    }
+    if (input.agent) {
+      user.info.agent = input.agent
+    }
+    if (input.model || input.agent) {
+      await Session.updateMessage(user.info)
     }
 
-    if (hasContent) {
-      // clear the error so toModelMessages includes this message's content
-      errored.error = undefined
-      errored.time.completed = undefined
-      await Session.updateMessage(errored)
+    if (hasBody(target.parts)) {
+      target.info.error = undefined
+      target.info.finish = undefined
+      target.info.time.completed = undefined
+      await Session.updateMessage(target.info)
     } else {
-      // no content was streamed before the error — remove the empty message
-      await Session.removeMessage({ sessionID: input.sessionID, messageID: errored.id })
+      await Session.removeMessage({ sessionID, messageID: target.info.id })
     }
 
-    await Session.touch(input.sessionID)
-    return loop({ sessionID: input.sessionID })
+    await Session.touch(sessionID)
+    const msg = await loop({ sessionID })
+    return {
+      sessionID,
+      info: msg.info,
+      parts: msg.parts,
+    }
   })
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
@@ -1148,7 +1223,7 @@ export namespace SessionPrompt {
                 ]
               }
               break
-            case "file:":
+            case "file:": {
               log.info("file", { mime: part.mime })
               // have to normalize, symbol search returns absolute paths
               // Decode the pathname since URL constructor doesn't automatically decode it
@@ -1322,7 +1397,15 @@ export namespace SessionPrompt {
                   source: part.source,
                 },
               ]
+            }
           }
+          return [
+            {
+              ...part,
+              messageID: info.id,
+              sessionID: input.sessionID,
+            },
+          ]
         }
 
         if (part.type === "agent") {

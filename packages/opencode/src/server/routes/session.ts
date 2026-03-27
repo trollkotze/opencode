@@ -397,6 +397,7 @@ export const SessionRoutes = lazy(() =>
               "application/json": {
                 schema: resolver(
                   z.object({
+                    sessionID: SessionID.zod,
                     info: MessageV2.Assistant,
                     parts: MessageV2.Part.array(),
                   }),

@@ -54,7 +54,6 @@ import { useKeybind } from "@tui/context/keybind"
 import { Header } from "./header"
 import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
-import { DialogSelect } from "../../ui/dialog-select"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
@@ -82,6 +81,7 @@ import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
+import { canResume } from "../../util/continue"
 
 addDefaultParsers(parsers.parsers)
 
@@ -576,7 +576,8 @@ export function Session() {
         const last = messages().findLast((x) => x.role === "assistant" && (!revertID || x.id < revertID)) as
           | AssistantMessage
           | undefined
-        return !!last?.error
+        if (!last || last.role !== "assistant") return false
+        return canResume(last, sync.data.part[last.id] ?? [])
       })(),
       onSelect: (dialog) => {
         dialog.clear()
@@ -585,14 +586,12 @@ export function Session() {
           toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
           return
         }
-        if (!supportsContinuation(model.providerID)) {
-          dialog.replace(() => <DialogContinueModel sessionID={route.sessionID} />)
-          return
-        }
         sdk.client.session
           .resume({
             sessionID: route.sessionID,
+            messageID: lastAssistant()?.id,
             model: { providerID: model.providerID, modelID: model.modelID },
+            agent: local.agent.current().name,
           })
           .catch((e: unknown) => {
             toast.show({
@@ -1239,6 +1238,16 @@ export function Session() {
                     </Match>
                     <Match when={message.role === "assistant"}>
                       <AssistantMessage
+                        onMouseUp={() => {
+                          if (renderer.getSelection()?.getSelectedText()) return
+                          dialog.replace(() => (
+                            <DialogMessage
+                              messageID={message.id}
+                              sessionID={route.sessionID}
+                              setPrompt={(promptInfo) => prompt.set(promptInfo)}
+                            />
+                          ))
+                        }}
                         last={lastAssistant()?.id === message.id}
                         message={message as AssistantMessage}
                         parts={sync.data.part[message.id] ?? []}
@@ -1407,61 +1416,7 @@ function UserMessage(props: {
   )
 }
 
-const CONTINUATION_PROVIDERS = new Set([
-  "anthropic",
-  "google",
-  "google-vertex",
-  "openai",
-  "azure",
-  "opencode",
-  "openrouter",
-])
-
-function supportsContinuation(providerID: string) {
-  if (CONTINUATION_PROVIDERS.has(providerID)) return true
-  // gateway providers that route to anthropic/google/openai
-  if (providerID.includes("anthropic") || providerID.includes("openai") || providerID.includes("google")) return true
-  return false
-}
-
-function DialogContinueModel(props: { sessionID: string }) {
-  const local = useLocal()
-  const sync = useSync()
-  const dialog = useDialog()
-  const sdk = useSDK()
-  const toast = useToast()
-
-  const options = createMemo(() => {
-    return sync.data.provider.flatMap((provider) =>
-      Object.entries(provider.models)
-        .filter(([_, info]) => info.status !== "deprecated" && supportsContinuation(provider.id))
-        .map(([id, info]) => ({
-          value: { providerID: provider.id, modelID: id },
-          title: info.name ?? id,
-          description: provider.name,
-          onSelect: () => {
-            local.model.set({ providerID: provider.id, modelID: id }, { recent: true })
-            dialog.clear()
-            sdk.client.session
-              .resume({
-                sessionID: props.sessionID,
-                model: { providerID: provider.id, modelID: id },
-              })
-              .catch((e: unknown) => {
-                toast.show({
-                  message: e instanceof Error ? e.message : "Failed to continue",
-                  variant: "error",
-                })
-              })
-          },
-        })),
-    )
-  })
-
-  return <DialogSelect title="Select model for continuation" options={options()} />
-}
-
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean; onMouseUp?: () => void }) {
   const local = useLocal()
   const { theme } = useTheme()
   const sync = useSync()
@@ -1483,7 +1438,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   })
 
   const continuable = createMemo(() => {
-    return !!props.message.error
+    return canResume(props.message, props.parts)
   })
 
   function handleContinue() {
@@ -1492,14 +1447,12 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
       return
     }
-    if (!supportsContinuation(model.providerID)) {
-      dialog.replace(() => <DialogContinueModel sessionID={props.message.sessionID} />)
-      return
-    }
     sdk.client.session
       .resume({
         sessionID: props.message.sessionID,
+        messageID: props.message.id,
         model: { providerID: model.providerID, modelID: model.modelID },
+        agent: local.agent.current().name,
       })
       .catch((e: unknown) => {
         toast.show({
@@ -1512,7 +1465,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const keybind = useKeybind()
 
   return (
-    <>
+    <box flexDirection="column" onMouseUp={props.onMouseUp}>
       <For each={props.parts}>
         {(part, index) => {
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
@@ -1581,7 +1534,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           </box>
         </Match>
       </Switch>
-    </>
+    </box>
   )
 }
 

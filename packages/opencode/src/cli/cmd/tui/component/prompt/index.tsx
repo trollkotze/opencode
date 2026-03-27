@@ -120,6 +120,43 @@ export function Prompt(props: PromptProps) {
     if (!messages) return undefined
     return messages.findLast((m) => m.role === "user")
   })
+  const lastAssistantMessage = createMemo(() => {
+    if (!props.sessionID) return undefined
+    const messages = sync.data.message[props.sessionID]
+    if (!messages) return undefined
+    return messages.findLast((m) => m.role === "assistant")
+  })
+
+  function resume() {
+    if (!props.sessionID) return
+    const model = local.model.current()
+    const last = lastAssistantMessage()
+    if (!model) {
+      promptModelWarning()
+      return
+    }
+    if (!last || last.role !== "assistant") {
+      toast.show({ message: "No assistant message found", variant: "warning", duration: 3000 })
+      return
+    }
+    sdk.client.session
+      .abort({ sessionID: props.sessionID })
+      .catch(() => {})
+      .then(() =>
+        sdk.client.session.resume({
+          sessionID: props.sessionID!,
+          messageID: last.id,
+          model: { providerID: model.providerID, modelID: model.modelID },
+          agent: local.agent.current().name,
+        }),
+      )
+      .catch((err: unknown) => {
+        toast.show({
+          message: err instanceof Error ? err.message : "Failed to continue",
+          variant: "error",
+        })
+      })
+  }
 
   const [store, setStore] = createStore<{
     prompt: PromptInfo
@@ -936,7 +973,9 @@ export function Prompt(props: PromptProps) {
                 // Normalize line endings at the boundary
                 // Windows ConPTY/Terminal often sends CR-only newlines in bracketed paste
                 // Replace CRLF first, then any remaining CR
-                const normalizedText = event.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                const normalizedText = String((event as { text?: string }).text ?? "")
+                  .replace(/\r\n/g, "\n")
+                  .replace(/\r/g, "\n")
                 const pastedContent = normalizedText.trim()
                 if (!pastedContent) {
                   command.trigger("prompt.paste")
@@ -1138,6 +1177,11 @@ export function Prompt(props: PromptProps) {
                   {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
                 </span>
               </text>
+              <Show when={status().type === "retry"}>
+                <text fg={theme.primary} onMouseUp={resume}>
+                  continue now
+                </text>
+              </Show>
             </box>
           </Show>
           <Show when={status().type !== "retry"}>

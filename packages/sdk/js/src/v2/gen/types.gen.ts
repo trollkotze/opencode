@@ -3123,10 +3123,13 @@ export type SessionAbortResponse = SessionAbortResponses[keyof SessionAbortRespo
 
 export type SessionResumeData = {
   body?: {
+    messageID?: string
     model?: {
       providerID: string
       modelID: string
     }
+    agent?: string
+    fork?: boolean
   }
   path: {
     sessionID: string
@@ -3156,6 +3159,7 @@ export type SessionResumeResponses = {
    * Continued message
    */
   200: {
+    sessionID: string
     info: AssistantMessage
     parts: Array<Part>
   }

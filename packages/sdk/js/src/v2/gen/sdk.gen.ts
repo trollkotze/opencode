@@ -1659,10 +1659,13 @@ export class Session2 extends HeyApiClient {
       sessionID: string
       directory?: string
       workspace?: string
+      messageID?: string
       model?: {
         providerID: string
         modelID: string
       }
+      agent?: string
+      fork?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1674,7 +1677,10 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "sessionID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "body", key: "messageID" },
             { in: "body", key: "model" },
+            { in: "body", key: "agent" },
+            { in: "body", key: "fork" },
           ],
         },
       ],
