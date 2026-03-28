@@ -1,4 +1,4 @@
-import { createMemo, onMount } from "solid-js"
+import { createMemo } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { useSDK } from "@tui/context/sdk"
 import { useLocal } from "@tui/context/local"
@@ -6,15 +6,13 @@ import { useDialog } from "../../ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
 import { useRenderer, useKeyboard } from "@opentui/solid"
-import { TextareaRenderable, TextAttributes } from "@opentui/core"
-import { Clipboard } from "@tui/util/clipboard"
+import { TextareaRenderable } from "@opentui/core"
 import { Editor } from "../../util/editor"
-import { useTheme } from "../../context/theme"
 import type { Part, TextPart, ToolPart, ReasoningPart } from "@opencode-ai/sdk/v2"
 import { useRoute } from "@tui/context/route"
-import { canContinue } from "../../util/continue"
 import type { PromptInfo } from "@tui/component/prompt/history"
-import type { DialogContext } from "@tui/ui/dialog"
+import { buildMessageActions, messagePrompt } from "./dialog-message-actions"
+import { DialogEditPart } from "./dialog-edit-part"
 
 export function DialogPart(props: {
   sessionID: string
@@ -96,197 +94,7 @@ export function DialogPart(props: {
   }
 
   function prompt() {
-    const message = msg()
-    if (!message) return
-    return parts().reduce(
-      (agg, part) => {
-        if (part.type === "text" && !part.synthetic) agg.input += part.text
-        if (part.type === "file") agg.parts.push(part)
-        return agg
-      },
-      { input: "", parts: [] as PromptInfo["parts"] },
-    )
-  }
-
-  function resume(ctx: DialogContext, fork: boolean) {
-    const message = msg()
-    const model = local.model.current()
-    if (!message || message.role !== "assistant") return
-    if (!model) {
-      toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
-      return
-    }
-    sdk.client.session
-      .resume({
-        sessionID: props.sessionID,
-        messageID: message.id,
-        model: { providerID: model.providerID, modelID: model.modelID },
-        agent: local.agent.current().name,
-        fork,
-      })
-      .then((res) => {
-        if (fork && res.data?.sessionID) {
-          route.navigate({
-            type: "session",
-            sessionID: res.data.sessionID,
-          })
-        }
-      })
-      .catch((err: unknown) => {
-        toast.show({
-          message: err instanceof Error ? err.message : "Failed to continue",
-          variant: "error",
-        })
-      })
-    ctx.clear()
-  }
-
-  function messageActions(): DialogSelectOption<string>[] {
-    const message = msg()
-    if (!message) return []
-
-    const actions: DialogSelectOption<string>[] = []
-
-    if (message.role === "assistant" && canContinue(message, parts())) {
-      actions.push({
-        title: "Continue here",
-        value: "session.continue.here",
-        description: "remove later messages and continue",
-        category: "Message",
-        onSelect: (ctx) => resume(ctx, false),
-      })
-      actions.push({
-        title: "Continue in fork",
-        value: "session.continue.fork",
-        description: "continue from here in a new session",
-        category: "Message",
-        onSelect: (ctx) => resume(ctx, true),
-      })
-    }
-
-    if (text()) {
-      actions.push({
-        title: "Edit text",
-        value: "message.edit",
-        description: "edit message text",
-        category: "Message",
-        onSelect: () => {
-          const p = text()!
-          dialog.replace(() => (
-            <DialogEditPart
-              text={p.text}
-              onSave={async (value) => {
-                await patchPart({ ...p, text: value })
-                dialog.clear()
-              }}
-            />
-          ))
-        },
-      })
-
-      if (process.env["VISUAL"] || process.env["EDITOR"]) {
-        actions.push({
-          title: "Edit in $EDITOR",
-          value: "message.editor",
-          description: process.env["VISUAL"] || process.env["EDITOR"]!,
-          category: "Message",
-          onSelect: async () => {
-            dialog.clear()
-            const p = text()!
-            const result = await Editor.open({ value: p.text, renderer })
-            if (result !== undefined) {
-              await patchPart({ ...p, text: result })
-            }
-          },
-        })
-      }
-    }
-
-    if (message.role === "assistant" && text()) {
-      actions.push({
-        title: "Compact message",
-        value: "message.compact",
-        description: "summarize this whole assistant turn",
-        category: "Message",
-        onSelect: async (ctx) => {
-          const model = picked()
-          if (!model) return
-          await actMessage({ action: "summarize", model })
-          ctx.clear()
-        },
-      })
-
-      if (compacted()) {
-        actions.push({
-          title: "Restore message",
-          value: "message.restore",
-          description: "restore full parts in context",
-          category: "Message",
-          onSelect: async (ctx) => {
-            await actMessage({ action: "restore" })
-            ctx.clear()
-          },
-        })
-      }
-    }
-
-    actions.push({
-      title: "Revert",
-      value: "session.revert",
-      description: "undo messages and file changes",
-      category: "Message",
-      onSelect: (ctx) => {
-        sdk.client.session.revert({
-          sessionID: props.sessionID,
-          messageID: props.messageID,
-        })
-        const value = prompt()
-        if (value) route.navigate({ type: "session", sessionID: props.sessionID, initialPrompt: value })
-        ctx.clear()
-      },
-    })
-
-    actions.push({
-      title: "Revert messages",
-      value: "session.revert.messages",
-      description: "keep file changes",
-      category: "Message",
-      onSelect: (ctx) => {
-        sdk.client.session.revert({
-          sessionID: props.sessionID,
-          messageID: props.messageID,
-          skipFiles: true,
-        })
-        const value = prompt()
-        if (value) route.navigate({ type: "session", sessionID: props.sessionID, initialPrompt: value })
-        ctx.clear()
-      },
-    })
-
-    actions.push({
-      title: "Copy",
-      value: "message.copy",
-      description: "message text to clipboard",
-      category: "Message",
-      onSelect: async (ctx) => {
-        const value = parts().reduce((agg, part) => {
-          if (part.type === "text" && !part.synthetic) agg += part.text
-          return agg
-        }, "")
-        await Clipboard.copy(value)
-        ctx.clear()
-      },
-    })
-
-    actions.push({
-      title: "Fork",
-      value: "session.fork",
-      description: "create a new session",
-      category: "Message",
-      onSelect: fork,
-    })
-
-    return actions
+    return messagePrompt(parts() as PromptInfo["parts"])
   }
 
   function textActions(p: TextPart): DialogSelectOption<string>[] {
@@ -473,65 +281,39 @@ export function DialogPart(props: {
   const options = createMemo(() => {
     const p = part()
     if (!p) return []
-    if (p.type === "text") return [...messageActions(), ...textActions(p)]
-    if (p.type === "tool") return [...messageActions(), ...toolActions(p)]
-    if (p.type === "reasoning") return [...messageActions(), ...reasoningActions(p)]
+    const message = buildMessageActions({
+      sessionID: props.sessionID,
+      messageID: props.messageID,
+      message: msg(),
+      parts: parts(),
+      text: text(),
+      compacted: compacted(),
+      currentModel: () => local.model.current(),
+      currentAgent: () => local.agent.current().name,
+      patchText: async (part, value) => patchPart({ ...part, text: value }),
+      act: actMessage,
+      revert: (skipFiles) => {
+        sdk.client.session.revert({
+          sessionID: props.sessionID,
+          messageID: props.messageID,
+          ...(skipFiles ? { skipFiles: true } : {}),
+        })
+        route.navigate({ type: "session", sessionID: props.sessionID, initialPrompt: prompt() })
+      },
+      fork,
+      navigate: (sessionID) => route.navigate({ type: "session", sessionID }),
+      fetchResume: (data) => sdk.client.session.resume(data),
+      open: (fn) => dialog.replace(fn),
+      clear: () => dialog.clear(),
+      edit: (value) => Editor.open({ value, renderer }),
+      show: (message, variant) => toast.show({ message, variant, duration: 3000 }),
+      category: "Message",
+    })
+    if (p.type === "text") return [...message, ...textActions(p)]
+    if (p.type === "tool") return [...message, ...toolActions(p)]
+    if (p.type === "reasoning") return [...message, ...reasoningActions(p)]
     return []
   })
 
   return <DialogSelect title="Actions" options={options()} />
-}
-
-export function DialogEditPart(props: { text: string; onSave: (text: string) => void }) {
-  const dialog = useDialog()
-  const { theme } = useTheme()
-  let textarea: TextareaRenderable
-
-  useKeyboard((evt) => {
-    if (evt.ctrl && evt.name === "s") {
-      evt.preventDefault()
-      props.onSave(textarea.plainText)
-    }
-  })
-
-  onMount(() => {
-    dialog.setSize("large")
-    setTimeout(() => {
-      if (!textarea || textarea.isDestroyed) return
-      textarea.focus()
-    }, 1)
-  })
-
-  return (
-    <box paddingLeft={2} paddingRight={2} gap={1}>
-      <box flexDirection="row" justifyContent="space-between">
-        <text attributes={TextAttributes.BOLD} fg={theme.text}>
-          Edit Part
-        </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
-      <textarea
-        onSubmit={() => {
-          props.onSave(textarea.plainText)
-        }}
-        height={15}
-        ref={(val: TextareaRenderable) => (textarea = val)}
-        initialValue={props.text}
-        placeholder="Enter text"
-        textColor={theme.text}
-        focusedTextColor={theme.text}
-        cursorColor={theme.text}
-      />
-      <box paddingBottom={1} gap={1} flexDirection="row">
-        <text fg={theme.text}>
-          ctrl+s <span style={{ fg: theme.textMuted }}>save</span>
-        </text>
-        <text fg={theme.text}>
-          esc <span style={{ fg: theme.textMuted }}>cancel</span>
-        </text>
-      </box>
-    </box>
-  )
 }
