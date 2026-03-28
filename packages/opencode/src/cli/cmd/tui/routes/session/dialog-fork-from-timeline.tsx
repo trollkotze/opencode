@@ -8,6 +8,7 @@ import { useRoute } from "@tui/context/route"
 import { useDialog } from "../../ui/dialog"
 import type { PromptInfo } from "@tui/component/prompt/history"
 import { useTheme } from "@tui/context/theme"
+import { forkFromMessage } from "./dialog-message-actions"
 
 export function DialogForkFromTimeline(props: { sessionID: string; onMove: (messageID: string) => void }) {
   const sync = useSync()
@@ -35,28 +36,15 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
         footer: Locale.time(message.time.created),
         gutter: <text fg={message.role === "user" ? theme.primary : theme.accent}>●</text>,
         onSelect: async (dialog) => {
-          const forked = await sdk.client.session.fork({
+          await forkFromMessage({
             sessionID: props.sessionID,
             messageID: message.id,
+            role: message.role,
+            parts: sync.data.part[message.id] as PromptInfo["parts"],
+            fork: (data) => sdk.client.session.fork(data),
+            navigate: (sessionID, initialPrompt) => route.navigate({ type: "session", sessionID, initialPrompt }),
+            clear: () => dialog.clear(),
           })
-          route.navigate({
-            sessionID: forked.data!.id,
-            type: "session",
-            initialPrompt:
-              message.role === "user"
-                ? (sync.data.part[message.id] ?? []).reduce(
-                    (agg, part) => {
-                      if (part.type === "text") {
-                        if (!part.synthetic) agg.input += part.text
-                      }
-                      if (part.type === "file") agg.parts.push(part)
-                      return agg
-                    },
-                    { input: "", parts: [] as PromptInfo["parts"] },
-                  )
-                : undefined,
-          })
-          dialog.clear()
         },
       })
     }

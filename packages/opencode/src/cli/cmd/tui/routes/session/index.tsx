@@ -84,6 +84,7 @@ import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { canResume } from "../../util/continue"
+import { resumeCurrent } from "./dialog-message-actions"
 
 addDefaultParsers(parsers.parsers)
 
@@ -582,24 +583,16 @@ export function Session() {
       })(),
       onSelect: (dialog) => {
         dialog.clear()
-        const model = local.model.current()
-        if (!model) {
-          toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
-          return
-        }
-        sdk.client.session
-          .resume({
-            sessionID: route.sessionID,
-            messageID: lastAssistant()?.id,
-            model: { providerID: model.providerID, modelID: model.modelID },
-            agent: local.agent.current().name,
-          })
-          .catch((e: unknown) => {
-            toast.show({
-              message: e instanceof Error ? e.message : "Failed to continue",
-              variant: "error",
-            })
-          })
+        const last = lastAssistant()
+        if (!last) return
+        resumeCurrent({
+          sessionID: route.sessionID,
+          messageID: last.id,
+          currentModel: () => local.model.current(),
+          currentAgent: () => local.agent.current().name,
+          resume: (data) => sdk.client.session.resume(data),
+          show: (message, variant) => toast.show({ message, variant, duration: 3000 }),
+        })
       },
     },
     {

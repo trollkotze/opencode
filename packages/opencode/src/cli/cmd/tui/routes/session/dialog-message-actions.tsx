@@ -28,6 +28,60 @@ export function messagePrompt(parts: PromptInfo["parts"]) {
   )
 }
 
+export async function forkFromMessage(input: {
+  sessionID: string
+  messageID: string
+  role?: string
+  parts: PromptInfo["parts"]
+  fork: (data: { sessionID: string; messageID: string }) => Promise<{ data?: { id?: string } }>
+  navigate: (sessionID: string, prompt?: PromptInfo) => void
+  clear?: () => void
+}) {
+  const result = await input.fork({
+    sessionID: input.sessionID,
+    messageID: input.messageID,
+  })
+  const sessionID = result.data?.id
+  if (!sessionID) return
+  input.navigate(sessionID, input.role === "user" ? messagePrompt(input.parts) : undefined)
+  input.clear?.()
+}
+
+export async function resumeCurrent(input: {
+  sessionID: string
+  messageID: string
+  currentModel: () => Model | undefined
+  currentAgent: () => string
+  resume: (data: {
+    sessionID: string
+    messageID: string
+    model: Model
+    agent: string
+    fork?: boolean
+  }) => Promise<{ data?: { sessionID?: string } }>
+  show: (message: string, variant: "warning" | "error") => void
+  navigate?: (sessionID: string) => void
+  fork?: boolean
+}) {
+  const model = input.currentModel()
+  if (!model) {
+    input.show("No model selected", "warning")
+    return
+  }
+  try {
+    const result = await input.resume({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      model,
+      agent: input.currentAgent(),
+      fork: input.fork,
+    })
+    if (input.fork && result.data?.sessionID) input.navigate?.(result.data.sessionID)
+  } catch (err) {
+    input.show(err instanceof Error ? err.message : "Failed to continue", "error")
+  }
+}
+
 export function buildMessageActions(input: {
   sessionID: string
   messageID: string
@@ -75,26 +129,17 @@ export function buildMessageActions(input: {
 
   function resume(ctx: DialogContext, fork: boolean) {
     const msg = assistant()
-    const model = input.currentModel()
     if (!msg) return
-    if (!model) {
-      input.show("No model selected", "warning")
-      return
-    }
-    input
-      .fetchResume({
-        sessionID: input.sessionID,
-        messageID: msg.id,
-        model,
-        agent: input.currentAgent(),
-        fork,
-      })
-      .then((res) => {
-        if (fork && res.data?.sessionID) input.navigate(res.data.sessionID)
-      })
-      .catch((err: unknown) => {
-        input.show(err instanceof Error ? err.message : "Failed to continue", "error")
-      })
+    resumeCurrent({
+      sessionID: input.sessionID,
+      messageID: msg.id,
+      currentModel: input.currentModel,
+      currentAgent: input.currentAgent,
+      resume: input.fetchResume,
+      show: input.show,
+      navigate: input.navigate,
+      fork,
+    })
     ctx.clear()
   }
 

@@ -11,7 +11,7 @@ import { Editor } from "../../util/editor"
 import type { Part, TextPart, ToolPart, ReasoningPart } from "@opencode-ai/sdk/v2"
 import { useRoute } from "@tui/context/route"
 import type { PromptInfo } from "@tui/component/prompt/history"
-import { buildMessageActions, messagePrompt } from "./dialog-message-actions"
+import { buildMessageActions, forkFromMessage, messagePrompt } from "./dialog-message-actions"
 import { DialogEditPart } from "./dialog-edit-part"
 
 export function DialogPart(props: {
@@ -67,16 +67,16 @@ export function DialogPart(props: {
     })
   }
 
-  async function fork() {
-    const forked = await sdk.client.session.fork({
+  function fork() {
+    return forkFromMessage({
       sessionID: props.sessionID,
       messageID: props.messageID,
+      role: msg()?.role,
+      parts: parts() as PromptInfo["parts"],
+      fork: (data) => sdk.client.session.fork(data),
+      navigate: (sessionID, initialPrompt) => route.navigate({ type: "session", sessionID, initialPrompt }),
+      clear: () => dialog.clear(),
     })
-    route.navigate({
-      sessionID: forked.data!.id,
-      type: "session",
-    })
-    dialog.clear()
   }
 
   function picked() {

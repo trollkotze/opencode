@@ -9,7 +9,7 @@ import { useToast } from "../../ui/toast"
 import type { PromptInfo } from "@tui/component/prompt/history"
 import { useLocal } from "@tui/context/local"
 import { Editor } from "../../util/editor"
-import { buildMessageActions, messagePrompt } from "./dialog-message-actions"
+import { buildMessageActions, forkFromMessage, messagePrompt } from "./dialog-message-actions"
 
 export function DialogMessage(props: {
   messageID: string
@@ -77,21 +77,16 @@ export function DialogMessage(props: {
         })
         prompt()
       },
-      fork: async () => {
-        const result = await sdk.client.session.fork({
+      fork: () =>
+        forkFromMessage({
           sessionID: props.sessionID,
           messageID: props.messageID,
-        })
-        const msg = message()
-        const initialPrompt =
-          msg?.role === "user" ? messagePrompt(sync.data.part[msg.id] as PromptInfo["parts"]) : undefined
-        route.navigate({
-          sessionID: result.data!.id,
-          type: "session",
-          initialPrompt,
-        })
-        dialog.clear()
-      },
+          role: message()?.role,
+          parts: parts() as PromptInfo["parts"],
+          fork: (data) => sdk.client.session.fork(data),
+          navigate: (sessionID, initialPrompt) => route.navigate({ type: "session", sessionID, initialPrompt }),
+          clear: () => dialog.clear(),
+        }),
       navigate: (sessionID) => route.navigate({ type: "session", sessionID }),
       fetchResume: (data) => sdk.client.session.resume(data),
       open: (fn) => dialog.replace(fn),
