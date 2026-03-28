@@ -31,6 +31,7 @@ export namespace PermissionNext {
   export const RejectedError = S.RejectedError
   export const CorrectedError = S.CorrectedError
   export const DeniedError = S.DeniedError
+  export type AskResult = S.AskResult
 
   export function fromConfig(permission: Config.Permission) {
     const ruleset: Ruleset = []
