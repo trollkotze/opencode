@@ -7,10 +7,14 @@ import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
 import { useRenderer, useKeyboard } from "@opentui/solid"
 import { TextareaRenderable, TextAttributes } from "@opentui/core"
+import { Clipboard } from "@tui/util/clipboard"
 import { Editor } from "../../util/editor"
 import { useTheme } from "../../context/theme"
 import type { Part, TextPart, ToolPart, ReasoningPart } from "@opencode-ai/sdk/v2"
 import { useRoute } from "@tui/context/route"
+import { canContinue } from "../../util/continue"
+import type { PromptInfo } from "@tui/component/prompt/history"
+import type { DialogContext } from "@tui/ui/dialog"
 
 export function DialogPart(props: {
   sessionID: string
@@ -29,6 +33,16 @@ export function DialogPart(props: {
   const part = createMemo(() => {
     const parts = sync.data.part[props.messageID] ?? []
     return parts.find((p) => p.id === props.partID) as Part | undefined
+  })
+  const msg = createMemo(() => sync.data.message[props.sessionID]?.find((item) => item.id === props.messageID))
+  const parts = createMemo(() => sync.data.part[props.messageID] ?? [])
+  const text = createMemo(() => parts().find((p) => p.type === "text" && !p.synthetic) as TextPart | undefined)
+  const compacted = createMemo(() => {
+    return parts().some((part) => {
+      if (part.type === "text") return !!part.compacted
+      if (part.type === "reasoning") return !!part.compacted
+      return part.type === "tool" && part.state.status === "completed" && !!part.state.time.compacted
+    })
   })
 
   async function patchPart(data: Part) {
@@ -67,23 +81,212 @@ export function DialogPart(props: {
     dialog.clear()
   }
 
-  function withFork(actions: DialogSelectOption<string>[]) {
-    if (props.role !== "assistant") return actions
-    return [
-      ...actions,
-      {
-        title: "Fork",
-        value: "fork",
-        description: "create a new session",
-        onSelect: fork,
-      },
-    ]
-  }
-
   function picked() {
     const model = local.model.current()
     if (model) return model
     toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
+  }
+
+  async function actMessage(data: Record<string, unknown>) {
+    await sdk.fetch(`${sdk.url}/session/${props.sessionID}/message/${props.messageID}/context`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+  }
+
+  function prompt() {
+    const message = msg()
+    if (!message) return
+    return parts().reduce(
+      (agg, part) => {
+        if (part.type === "text" && !part.synthetic) agg.input += part.text
+        if (part.type === "file") agg.parts.push(part)
+        return agg
+      },
+      { input: "", parts: [] as PromptInfo["parts"] },
+    )
+  }
+
+  function resume(ctx: DialogContext, fork: boolean) {
+    const message = msg()
+    const model = local.model.current()
+    if (!message || message.role !== "assistant") return
+    if (!model) {
+      toast.show({ message: "No model selected", variant: "warning", duration: 3000 })
+      return
+    }
+    sdk.client.session
+      .resume({
+        sessionID: props.sessionID,
+        messageID: message.id,
+        model: { providerID: model.providerID, modelID: model.modelID },
+        agent: local.agent.current().name,
+        fork,
+      })
+      .then((res) => {
+        if (fork && res.data?.sessionID) {
+          route.navigate({
+            type: "session",
+            sessionID: res.data.sessionID,
+          })
+        }
+      })
+      .catch((err: unknown) => {
+        toast.show({
+          message: err instanceof Error ? err.message : "Failed to continue",
+          variant: "error",
+        })
+      })
+    ctx.clear()
+  }
+
+  function messageActions(): DialogSelectOption<string>[] {
+    const message = msg()
+    if (!message) return []
+
+    const actions: DialogSelectOption<string>[] = []
+
+    if (message.role === "assistant" && canContinue(message, parts())) {
+      actions.push({
+        title: "Continue here",
+        value: "session.continue.here",
+        description: "remove later messages and continue",
+        category: "Message",
+        onSelect: (ctx) => resume(ctx, false),
+      })
+      actions.push({
+        title: "Continue in fork",
+        value: "session.continue.fork",
+        description: "continue from here in a new session",
+        category: "Message",
+        onSelect: (ctx) => resume(ctx, true),
+      })
+    }
+
+    if (text()) {
+      actions.push({
+        title: "Edit text",
+        value: "message.edit",
+        description: "edit message text",
+        category: "Message",
+        onSelect: () => {
+          const p = text()!
+          dialog.replace(() => (
+            <DialogEditPart
+              text={p.text}
+              onSave={async (value) => {
+                await patchPart({ ...p, text: value })
+                dialog.clear()
+              }}
+            />
+          ))
+        },
+      })
+
+      if (process.env["VISUAL"] || process.env["EDITOR"]) {
+        actions.push({
+          title: "Edit in $EDITOR",
+          value: "message.editor",
+          description: process.env["VISUAL"] || process.env["EDITOR"]!,
+          category: "Message",
+          onSelect: async () => {
+            dialog.clear()
+            const p = text()!
+            const result = await Editor.open({ value: p.text, renderer })
+            if (result !== undefined) {
+              await patchPart({ ...p, text: result })
+            }
+          },
+        })
+      }
+    }
+
+    if (message.role === "assistant" && text()) {
+      actions.push({
+        title: "Compact message",
+        value: "message.compact",
+        description: "summarize this whole assistant turn",
+        category: "Message",
+        onSelect: async (ctx) => {
+          const model = picked()
+          if (!model) return
+          await actMessage({ action: "summarize", model })
+          ctx.clear()
+        },
+      })
+
+      if (compacted()) {
+        actions.push({
+          title: "Restore message",
+          value: "message.restore",
+          description: "restore full parts in context",
+          category: "Message",
+          onSelect: async (ctx) => {
+            await actMessage({ action: "restore" })
+            ctx.clear()
+          },
+        })
+      }
+    }
+
+    actions.push({
+      title: "Revert",
+      value: "session.revert",
+      description: "undo messages and file changes",
+      category: "Message",
+      onSelect: (ctx) => {
+        sdk.client.session.revert({
+          sessionID: props.sessionID,
+          messageID: props.messageID,
+        })
+        const value = prompt()
+        if (value) route.navigate({ type: "session", sessionID: props.sessionID, initialPrompt: value })
+        ctx.clear()
+      },
+    })
+
+    actions.push({
+      title: "Revert messages",
+      value: "session.revert.messages",
+      description: "keep file changes",
+      category: "Message",
+      onSelect: (ctx) => {
+        sdk.client.session.revert({
+          sessionID: props.sessionID,
+          messageID: props.messageID,
+          skipFiles: true,
+        })
+        const value = prompt()
+        if (value) route.navigate({ type: "session", sessionID: props.sessionID, initialPrompt: value })
+        ctx.clear()
+      },
+    })
+
+    actions.push({
+      title: "Copy",
+      value: "message.copy",
+      description: "message text to clipboard",
+      category: "Message",
+      onSelect: async (ctx) => {
+        const value = parts().reduce((agg, part) => {
+          if (part.type === "text" && !part.synthetic) agg += part.text
+          return agg
+        }, "")
+        await Clipboard.copy(value)
+        ctx.clear()
+      },
+    })
+
+    actions.push({
+      title: "Fork",
+      value: "session.fork",
+      description: "create a new session",
+      category: "Message",
+      onSelect: fork,
+    })
+
+    return actions
   }
 
   function textActions(p: TextPart): DialogSelectOption<string>[] {
@@ -186,7 +389,7 @@ export function DialogPart(props: {
       },
     })
 
-    return withFork(actions)
+    return actions.map((item) => ({ ...item, category: "Part" }))
   }
 
   function toolActions(p: ToolPart): DialogSelectOption<string>[] {
@@ -226,7 +429,7 @@ export function DialogPart(props: {
       },
     })
 
-    return withFork(actions)
+    return actions.map((item) => ({ ...item, category: "Part" }))
   }
 
   function reasoningActions(p: ReasoningPart): DialogSelectOption<string>[] {
@@ -264,19 +467,19 @@ export function DialogPart(props: {
       },
     })
 
-    return withFork(actions)
+    return actions.map((item) => ({ ...item, category: "Part" }))
   }
 
   const options = createMemo(() => {
     const p = part()
     if (!p) return []
-    if (p.type === "text") return textActions(p)
-    if (p.type === "tool") return toolActions(p)
-    if (p.type === "reasoning") return reasoningActions(p)
+    if (p.type === "text") return [...messageActions(), ...textActions(p)]
+    if (p.type === "tool") return [...messageActions(), ...toolActions(p)]
+    if (p.type === "reasoning") return [...messageActions(), ...reasoningActions(p)]
     return []
   })
 
-  return <DialogSelect title="Part Actions" options={options()} />
+  return <DialogSelect title="Actions" options={options()} />
 }
 
 export function DialogEditPart(props: { text: string; onSave: (text: string) => void }) {
